@@ -1,22 +1,21 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { beforeEach, afterEach, describe, expect, it } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 import QRGeneration from './QRGeneration'
-import { resetDemoSessionStore } from './demoSessionStore'
 
 interface RenderedView {
   container: HTMLDivElement
   root: Root
 }
 
-async function renderView(): Promise<RenderedView> {
+async function renderView(currentDate = '2026-08-11'): Promise<RenderedView> {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
 
   await act(async () => {
-    root.render(<QRGeneration />)
+    root.render(<QRGeneration currentDate={currentDate} />)
   })
 
   return { container, root }
@@ -26,7 +25,7 @@ describe('QRGeneration', () => {
   let rendered: RenderedView | null = null
 
   beforeEach(() => {
-    resetDemoSessionStore()
+    vi.stubEnv('VITE_ATTENDANCE_URL', 'http://localhost:5173/attend')
   })
 
   afterEach(() => {
@@ -36,65 +35,89 @@ describe('QRGeneration', () => {
       rendered = null
     }
     document.body.innerHTML = ''
+    vi.unstubAllEnvs()
   })
 
-  it('generates a tagged active session with an exact preview link and QR', async () => {
+  it('shows three service QR codes for the selected date', async () => {
     rendered = await renderView()
-    const generateButton = Array.from(rendered.container.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent === 'QR 생성하기')
+    const dateOption = rendered.container.querySelector<HTMLButtonElement>('.qr-date-option:not(:disabled)')
 
-    await act(async () => generateButton?.click())
+    await act(async () => dateOption?.click())
 
-    expect(rendered.container.querySelector('[data-testid="demo-session-qr-code"]')).toBeTruthy()
-    expect(rendered.container.querySelector('.admin-status-pill')?.textContent).toBe('활성')
-    expect(rendered.container.textContent).toContain('demo-service-2-2026-08-10-1100-01')
-    expect(rendered.container.querySelector<HTMLAnchorElement>('.qr-target-url')?.getAttribute('href'))
-      .toBe('/attend?demoSessionId=admin-demo-session-0001')
-    expect(rendered.container.querySelector<HTMLAnchorElement>('.qr-target-url')?.textContent)
-      .toBe('/attend?demoSessionId=admin-demo-session-0001')
+    expect(rendered.container.querySelectorAll('.qr-session-part-card')).toHaveLength(3)
+    expect(rendered.container.querySelectorAll('[data-testid="attendance-session-qr-code"]')).toHaveLength(3)
+    expect(Array.from(rendered.container.querySelectorAll('[data-attendance-url]')).map(
+      (element) => element.getAttribute('data-attendance-url'),
+    )).toEqual([
+      'http://localhost:5173/attend?serviceDate=2026-08-16&servicePart=1',
+      'http://localhost:5173/attend?serviceDate=2026-08-16&servicePart=2',
+      'http://localhost:5173/attend?serviceDate=2026-08-16&servicePart=3',
+    ])
+    expect(rendered.container.querySelectorAll('.qr-copy-button')).toHaveLength(3)
+    expect(rendered.container.querySelector('.qr-copy-button')?.textContent).toBe('QR 이미지 복사')
   })
 
-  it('keeps generated sessions unique and deactivates without removing the row', async () => {
+  it('keeps the three service QR codes unique when a date is selected repeatedly', async () => {
     rendered = await renderView()
-    const generateButton = Array.from(rendered.container.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent === 'QR 생성하기')
+    const dateOptions = rendered.container.querySelectorAll<HTMLButtonElement>('.qr-date-option:not(:disabled)')
 
-    await act(async () => generateButton?.click())
-    await act(async () => generateButton?.click())
+    await act(async () => dateOptions[0]?.click())
+    await act(async () => dateOptions[0]?.click())
 
-    expect(rendered.container.querySelectorAll('.qr-session-row')).toHaveLength(2)
-    expect(new Set(Array.from(rendered.container.querySelectorAll('.qr-session-row'))
-      .map((row) => row.getAttribute('data-session-id'))).size).toBe(2)
-    expect(new Set(Array.from(rendered.container.querySelectorAll('.qr-session-details strong'))
-      .map((tag) => tag.textContent)).size).toBe(2)
-
-    const deactivateButton = Array.from(rendered.container.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent === '비활성화')
-    await act(async () => deactivateButton?.click())
-
-    expect(rendered.container.querySelectorAll('.qr-session-row')).toHaveLength(2)
-    expect(rendered.container.querySelectorAll('.admin-status-pill.is-inactive')).toHaveLength(1)
-    expect(Array.from(rendered.container.querySelectorAll<HTMLButtonElement>('button'))
-      .filter((button) => button.textContent === '비활성화')).toHaveLength(1)
+    expect(rendered.container.querySelectorAll('.qr-session-part-card')).toHaveLength(3)
+    expect(rendered.container.querySelectorAll('.qr-copy-button')).toHaveLength(3)
+    expect(rendered.container.querySelectorAll('.admin-status-pill')).toHaveLength(0)
   })
 
-  it('reports invalid form values without creating a session', async () => {
+  it('shows every Sunday in the selected year and disables past dates', async () => {
     rendered = await renderView()
-    const date = rendered.container.querySelector<HTMLInputElement>('#demo-service-date')
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
-    if (!date || !setter) {
-      throw new Error('Unable to locate date input')
-    }
+    expect(rendered.container.querySelectorAll('.qr-date-option')).toHaveLength(5)
+    expect(rendered.container.querySelectorAll('.qr-month-options button')).toHaveLength(12)
+    expect(rendered.container.querySelectorAll('.qr-date-option:disabled').length).toBeGreaterThan(0)
+    expect(rendered.container.querySelectorAll('.qr-session-part-card')).toHaveLength(3)
+  })
 
-    await act(async () => {
-      setter.call(date, '2026-02-30')
-      date.dispatchEvent(new Event('input', { bubbles: true }))
-      date.dispatchEvent(new Event('change', { bubbles: true }))
-    })
-    const generateButton = Array.from(rendered.container.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent === 'QR 생성하기')
-    await act(async () => generateButton?.click())
+  it('does not render copyable QR codes when the attendance URL is invalid', async () => {
+    vi.stubEnv('VITE_ATTENDANCE_URL', 'not-a-valid-url')
+    rendered = await renderView()
 
-    expect(rendered.container.querySelectorAll('.qr-session-row')).toHaveLength(0)
+    expect(rendered.container.querySelector('[role="alert"]')).toBeTruthy()
+    expect(rendered.container.querySelectorAll('[data-testid="attendance-session-qr-code"]')).toHaveLength(0)
+    expect(rendered.container.querySelectorAll('.qr-copy-button')).toHaveLength(0)
+  })
+
+  it('selects the same day when the current date is Sunday', async () => {
+    rendered = await renderView('2026-08-16')
+
+    expect(rendered.container.querySelector('#qr-selected-date-title')?.textContent)
+      .toBe('2026.08.16 QR')
+  })
+
+  it('clears stale QR codes when a past month is selected and resets them for a future year', async () => {
+    rendered = await renderView()
+    const januaryButton = Array.from(
+      rendered.container.querySelectorAll<HTMLButtonElement>('.qr-month-options button'),
+    ).find((button) => button.textContent === '1월')
+
+    await act(async () => januaryButton?.click())
+
+    expect(rendered.container.querySelectorAll('.qr-session-part-card')).toHaveLength(0)
+    expect(rendered.container.textContent).toContain('선택할 수 있는 예배일이 없습니다.')
+
+    const year2027Button = Array.from(
+      rendered.container.querySelectorAll<HTMLButtonElement>('.qr-year-options button'),
+    ).find((button) => button.textContent === '2027년')
+
+    await act(async () => year2027Button?.click())
+
+    expect(rendered.container.querySelector('#qr-selected-date-title')?.textContent)
+      .toBe('2027.01.03 QR')
+    expect(Array.from(rendered.container.querySelectorAll('[data-attendance-url]')).map(
+      (element) => element.getAttribute('data-attendance-url'),
+    )).toEqual([
+      'http://localhost:5173/attend?serviceDate=2027-01-03&servicePart=1',
+      'http://localhost:5173/attend?serviceDate=2027-01-03&servicePart=2',
+      'http://localhost:5173/attend?serviceDate=2027-01-03&servicePart=3',
+    ])
   })
 })

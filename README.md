@@ -15,11 +15,11 @@ VITE_ATTENDANCE_MODE=demo VITE_ATTENDANCE_URL=http://localhost:5173/attend npm r
 
 Open:
 
-- Attendee target: `http://localhost:5173/attend`
-- Fixed QR monitor: `http://localhost:5173/qr`
+- QR management: `http://localhost:5173/admin?view=qr-generation`
+- Attendee base target: `http://localhost:5173/attend` (the selected service date and part are appended automatically)
 - Public MVP admin: `http://localhost:5173/admin`
 
-No mobile app install is needed. The QR page reads `VITE_ATTENDANCE_URL`, and that value must be an absolute HTTP(S) URL whose path is exactly `/attend`.
+No mobile app install is needed. QR management reads `VITE_ATTENDANCE_URL`, and that value must be an absolute HTTP(S) URL whose path is exactly `/attend`.
 
 ## Phone Testing
 
@@ -29,7 +29,7 @@ For a phone on the same Wi-Fi/LAN:
 VITE_ATTENDANCE_MODE=demo VITE_ATTENDANCE_URL=http://<your-lan-ip>:5173/attend npm run dev -- --host 0.0.0.0
 ```
 
-Then open `http://<your-lan-ip>:5173/qr` on the monitor and scan it from the phone. A temporary HTTPS tunnel can be useful for remote demos, but tunnel URLs are not stable fixed-QR deployment targets.
+Then open `http://<your-lan-ip>:5173/admin?view=qr-generation`, select an upcoming Sunday, and scan one of the 1·2·3부 QR codes from the phone. A temporary HTTPS tunnel can be useful for remote demos, but tunnel URLs are not stable deployment targets.
 
 ## Release Checks
 
@@ -69,11 +69,11 @@ Deployment setup is intentionally credential-free in source:
 2. Enable Firebase Hosting and Cloud Firestore.
 3. Copy `.firebaserc.example` to `.firebaserc` locally and replace the placeholder project ID.
 4. Set `VITE_ATTENDANCE_MODE=firebase`, the six Web settings above, and `VITE_ATTENDANCE_URL=https://<your-hosting-domain>/attend`.
-5. Generate the public dummy seed with `npm run demo:seed -- --service-key 2026-08-10 --count 2000`. Load only its `members/{memberId}` and `serviceConfig/currentServiceKey` documents with approved authenticated tooling or the Firebase console; its `attendanceServices/{serviceKey}/submissions` object is empty by design.
+5. Generate the public dummy seed with `npm run demo:seed -- --service-key 2026-08-16 --count 2000`. Load its `members/{memberId}`, `serviceConfig/currentServiceKey`, and `serviceSessions/{serviceKey}` documents with approved authenticated tooling or the Firebase console; its `attendanceServices/{serviceKey}/submissions` object is empty by design.
 6. Run `npm run release:check` with Firebase mode and the Web settings present.
 7. Build and deploy only Hosting plus rules/indexes: `npm run build`, then `firebase deploy --only hosting,firestore:rules,firestore:indexes` from an already authenticated local Firebase CLI. Never commit its credentials.
 
-The repository enforces bounded reads: member loading is capped at 2,000 documents, current-service admin rows and count query at 100, and one member's current-service history at 25. Admin never reads a root or cross-service submissions collection; each request uses `attendanceServices/{serviceKey}/submissions`. Firestore query rules are not filters, so list rules intentionally validate only the request path and bound; direct gets and submission creates validate document shape. The dummy-only seed contract is therefore a hard data boundary, not a substitute for future authenticated operations.
+The repository enforces bounded reads: attendee name searches require at least two characters and return at most 10 member documents, current-service admin rows and count query at 2,000, and one member's current-service history at 25. QR URLs carry a pre-registered `serviceSessions/{serviceKey}` date and a fixed service part, while submissions remain scoped to `attendanceServices/{serviceKey}/submissions`. Firestore query rules are not filters, so list rules intentionally validate only the request path and bound; direct gets and submission creates validate document shape. The dummy-only seed contract is therefore a hard data boundary, not a substitute for future authenticated operations.
 
 If the Firebase CLI and Java are available, run a local emulator with `firebase emulators:start --only firestore,hosting` and set `VITE_FIRESTORE_EMULATOR_HOST=127.0.0.1:8080` alongside Firebase mode and the six Web settings. Seed dummy members and the current service config only, then run `npm run test:emulator` for the optional Web-SDK integration hook. It skips with an explicit reason when the CLI, Java, endpoint, or seed data is unavailable. The shared-persistence contract test remains separate, uses an in-process fake backend, and needs no credentials.
 

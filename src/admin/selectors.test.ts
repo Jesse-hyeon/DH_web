@@ -30,10 +30,10 @@ describe('admin demo selectors', () => {
     const currentMonth = selectPeriodDateRange(ADMIN_DEMO_FIXTURES, 'current-month')
     const lastSixMonths = selectPeriodDateRange(ADMIN_DEMO_FIXTURES, 'last-6-months')
 
-    expect(currentMonth).toEqual({ from: '2026-08-01', to: '2026-08-10' })
-    expect(lastSixMonths).toEqual({ from: '2026-03-01', to: '2026-08-10' })
-    expect(selectFilteredEvents(ADMIN_DEMO_FIXTURES, { dateRange: { from: '2026-08-03', to: '2026-08-03' } })
-      .every((event) => event.date === '2026-08-03')).toBe(true)
+    expect(currentMonth).toEqual({ from: '2026-08-01', to: '2026-08-16' })
+    expect(lastSixMonths).toEqual({ from: '2026-03-01', to: '2026-08-16' })
+    expect(selectFilteredEvents(ADMIN_DEMO_FIXTURES, { dateRange: { from: '2026-08-09', to: '2026-08-09' } })
+      .every((event) => event.date === '2026-08-09')).toBe(true)
   })
 
   it('applies service-part filters to event denominators and member rows', () => {
@@ -47,14 +47,14 @@ describe('admin demo selectors', () => {
   })
 
   it('preserves distinct member history and session participant totals', () => {
-    const memberAHistory = selectMemberHistory(ADMIN_DEMO_FIXTURES, 'admin-demo-member-0001')
-    const memberBHistory = selectMemberHistory(ADMIN_DEMO_FIXTURES, 'admin-demo-member-0002')
+    const memberAHistory = selectMemberHistory(ADMIN_DEMO_FIXTURES, 'm-001')
+    const memberBHistory = selectMemberHistory(ADMIN_DEMO_FIXTURES, 'm-002')
     const firstSession = ADMIN_DEMO_FIXTURES.sessions[0]
 
     expect(memberAHistory.length).toBeGreaterThan(0)
     expect(memberBHistory.length).toBeGreaterThan(0)
-    expect(memberAHistory.every((event) => event.memberId === 'admin-demo-member-0001')).toBe(true)
-    expect(memberBHistory.every((event) => event.memberId === 'admin-demo-member-0002')).toBe(true)
+    expect(memberAHistory.every((event) => event.memberId === 'm-001')).toBe(true)
+    expect(memberBHistory.every((event) => event.memberId === 'm-002')).toBe(true)
     expect(selectSessionParticipantCount(ADMIN_DEMO_FIXTURES, firstSession?.id ?? '')).toBeGreaterThan(0)
   })
 })

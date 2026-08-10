@@ -7,22 +7,24 @@ import type {
   AdminDemoEventStatus,
   AdminDemoFixtureBundle,
   AdminDemoMemberProfile,
+  AdminDemoServicePart,
   AdminDemoServiceAverage,
   AdminDemoServiceAggregateInput,
   AdminDemoServiceSession,
   AdminDemoWeeklyAggregateInput,
   AdminDemoWeeklySummary,
 } from './types'
+import { members as registeredMembers } from '../data/members'
 
 export const ADMIN_DEMO_MEMBER_COUNT = 2_000
-export const ADMIN_DEMO_REFERENCE_DATE: AdminDemoDate = '2026-08-10'
-export const ADMIN_DEMO_NEW_MEMBER_ID = 'admin-demo-member-0004'
-export const ADMIN_DEMO_LONG_ABSENCE_ID = 'admin-demo-member-0003'
+export const ADMIN_DEMO_REFERENCE_DATE: AdminDemoDate = '2026-08-16'
+export const ADMIN_DEMO_NEW_MEMBER_ID = 'm-004'
+export const ADMIN_DEMO_LONG_ABSENCE_ID = 'm-003'
 
-const WEEK_NUMBERS = [1, 2, 3, 4] as const
+const WEEK_NUMBERS = Array.from({ length: 26 }, (_, index) => index + 1)
+const RECENT_WEEK_NUMBERS = WEEK_NUMBERS.slice(-4)
 const SERVICE_PARTS = [1, 2, 3] as const
 const DAY_MS = 24 * 60 * 60 * 1_000
-
 function parseDate(date: AdminDemoDate): Date {
   return new Date(`${date}T00:00:00.000Z`)
 }
@@ -40,57 +42,64 @@ function rate(attendedCount: number, eligibleCount: number): number {
 }
 
 function createMembers(referenceDate: AdminDemoDate): AdminDemoMemberProfile[] {
-  return Array.from({ length: ADMIN_DEMO_MEMBER_COUNT }, (_, index) => {
+  return registeredMembers.slice(0, ADMIN_DEMO_MEMBER_COUNT).map((member, index) => {
     const number = index + 1
-    const id = `admin-demo-member-${String(number).padStart(4, '0')}`
+    const id = member.memberId
+    const cohort = member.cohort ?? `${((number * 37 + 11) % 5) + 1}교구`
+    const label = member.displayLabel
 
-    if (id === 'admin-demo-member-0001') {
-      return { id, label: '김현우 A', joinedOn: '2024-01-07', cohort: 'Founding group' }
-    }
-
-    if (id === 'admin-demo-member-0002') {
-      return { id, label: '김현우 B', joinedOn: '2024-03-18', cohort: 'Founding group' }
-    }
-
-    if (id === ADMIN_DEMO_LONG_ABSENCE_ID) {
-      return { id, label: 'Synthetic long-term absence', joinedOn: '2024-02-12', cohort: 'Care group' }
-    }
-
-    if (id === ADMIN_DEMO_NEW_MEMBER_ID) {
-      return { id, label: 'Synthetic new member', joinedOn: '2026-08-05', cohort: 'New group' }
-    }
+    if (id === 'm-001') return { id, label, joinedOn: '2024-01-07', cohort }
+    if (id === 'm-002') return { id, label, joinedOn: '2024-03-18', cohort }
+    if (id === ADMIN_DEMO_LONG_ABSENCE_ID) return { id, label, joinedOn: '2024-02-12', cohort }
+    if (id === ADMIN_DEMO_NEW_MEMBER_ID) return { id, label, joinedOn: '2026-08-05', cohort }
 
     const ageInDays = 45 + (number * 17) % 700
     return {
       id,
-      label: `Synthetic member ${String(number).padStart(4, '0')}`,
+      label,
       joinedOn: addDays(referenceDate, -ageInDays),
-      cohort: number % 3 === 0 ? 'Care group' : number % 2 === 0 ? 'New group' : 'General group',
+      cohort,
     }
   })
 }
 
 function createSessions(referenceDate: AdminDemoDate): AdminDemoServiceSession[] {
   return WEEK_NUMBERS.flatMap((weekNumber) => {
-    const date = addDays(referenceDate, (weekNumber - 4) * 7)
+    const date = addDays(referenceDate, (weekNumber - WEEK_NUMBERS.length) * 7)
 
     return SERVICE_PARTS.map((part) => ({
       id: `admin-demo-session-w${weekNumber}-p${part}`,
       part,
       date,
-      startsAt: part === 1 ? '09:00' : part === 2 ? '11:00' : '14:00',
+      startsAt: part === 1 ? '07:30' : part === 2 ? '09:30' : '11:30',
       weekNumber,
       label: `Week ${weekNumber} service ${part}`,
     }))
   })
 }
 
-function eventStatus(memberNumber: number, memberId: string, weekNumber: 1 | 2 | 3 | 4): AdminDemoEventStatus {
-  if (memberId === ADMIN_DEMO_LONG_ABSENCE_ID) {
+function eventStatus(
+  memberNumber: number,
+  memberId: string,
+  weekNumber: number,
+  part: AdminDemoServicePart,
+): AdminDemoEventStatus {
+  if (weekNumber === WEEK_NUMBERS.length) {
     return 'missed'
   }
 
-  return memberNumber % 4 === weekNumber ? 'missed' : 'attended'
+  if (memberId === ADMIN_DEMO_LONG_ABSENCE_ID) {
+    return weekNumber > WEEK_NUMBERS.length - 4 ? 'missed' : 'attended'
+  }
+
+  const regularAbsence = memberNumber % 4 === weekNumber
+  const partSpecificAbsence = part === 1
+    ? memberNumber % 10 === weekNumber % 10
+    : part === 2
+      ? memberNumber % 20 === weekNumber % 20
+      : false
+
+  return regularAbsence || partSpecificAbsence ? 'missed' : 'attended'
 }
 
 function createEvents(
@@ -115,7 +124,7 @@ function createEvents(
         date: session.date,
         part: session.part,
         weekNumber: session.weekNumber,
-        status: eventStatus(memberNumber, member.id, session.weekNumber),
+        status: eventStatus(memberNumber, member.id, session.weekNumber, session.part),
       }]
     })
   })
@@ -165,7 +174,7 @@ function createWeeklySummaries(
   events: ReadonlyArray<AdminDemoAttendanceEvent>,
   sessions: ReadonlyArray<AdminDemoServiceSession>,
 ): AdminDemoWeeklySummary[] {
-  return WEEK_NUMBERS.map((weekNumber) => createWeeklySummary({ weekNumber, events, sessions }))
+  return RECENT_WEEK_NUMBERS.map((weekNumber) => createWeeklySummary({ weekNumber, events, sessions }))
 }
 
 function isNewMember(member: AdminDemoMemberProfile, referenceDate: AdminDemoDate): boolean {
@@ -195,7 +204,7 @@ function createDashboard(
     memberCount: input.members.length,
     eventCount: input.events.length,
     newMemberCount: input.members.filter((member) => isNewMember(member, input.referenceDate)).length,
-    longTermAbsenteeCount: input.members.filter((member) => missedWeeksByMember.get(member.id)?.size === WEEK_NUMBERS.length).length,
+    longTermAbsenteeCount: input.members.filter((member) => missedWeeksByMember.get(member.id)?.size === RECENT_WEEK_NUMBERS.length).length,
     weeklyAverage: weeklySummaries.reduce((total, summary) => total + summary.attendedCount, 0) / weeklySummaries.length,
     serviceAverages: createServiceAverages(input.events),
     weeklySummaries,

@@ -11,21 +11,23 @@ describe('synthetic registered members', () => {
     expect(members).toHaveLength(DEFAULT_MEMBER_COUNT)
   })
 
-  it('keeps the duplicate display name choices searchable and distinct', () => {
-    const matchingMembers = members.filter((member) => member.searchName === '김현우')
-
-    expect(matchingMembers).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ memberId: 'm-001', displayLabel: '김현우 A' }),
-        expect.objectContaining({ memberId: 'm-002', displayLabel: '김현우 B' }),
-      ]),
-    )
-    expect(matchingMembers[0]?.memberId).not.toBe(matchingMembers[1]?.memberId)
+  it('uses realistic unique Korean names and an evenly distributed cohort', () => {
+    expect(members.slice(0, 2)).toEqual([
+      expect.objectContaining({ memberId: 'm-001', displayLabel: '김현우', cohort: '4교구' }),
+      expect.objectContaining({ memberId: 'm-002', displayLabel: '김지훈', cohort: '1교구' }),
+    ])
+    expect(new Set(members.map((member) => member.displayLabel)).size).toBe(DEFAULT_MEMBER_COUNT)
+    expect(members.filter((member) => member.cohort === '1교구')).toHaveLength(400)
   })
 
   it('assigns a unique ID to every member', () => {
     const ids = members.map((member) => member.memberId)
 
     expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('rejects counts outside the shared unique-name capacity', () => {
+    expect(() => generateMembers(1)).toThrow(/from 2 to 2000/)
+    expect(() => generateMembers(2_001)).toThrow(/from 2 to 2000/)
   })
 })

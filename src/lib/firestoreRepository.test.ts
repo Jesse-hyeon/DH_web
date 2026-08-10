@@ -18,6 +18,7 @@ describe('firestoreRepository helpers', () => {
     expect(COLLECTIONS).toEqual({
       members: 'members',
       serviceConfig: 'serviceConfig',
+      serviceSessions: 'serviceSessions',
       attendanceServices: 'attendanceServices',
       attendanceSubmissions: 'submissions',
     });
@@ -26,6 +27,7 @@ describe('firestoreRepository helpers', () => {
       'memberId',
       'displayNameSnapshot',
       'serviceKey',
+      'servicePart',
       'submittedAt',
       'createdAtClient',
     ]);
@@ -37,6 +39,7 @@ describe('firestoreRepository helpers', () => {
         memberId: 'm1',
         displayNameSnapshot: 'Member One',
         serviceKey: 'service-1',
+        servicePart: 1,
         submittedAt: {},
       }),
     ).toBe(true);
@@ -46,6 +49,7 @@ describe('firestoreRepository helpers', () => {
         memberId: 'm1',
         displayNameSnapshot: 'Member One',
         serviceKey: 'service-1',
+        servicePart: 1,
         submittedAt: {},
         createdAtClient: new Date(),
       }),
@@ -56,6 +60,7 @@ describe('firestoreRepository helpers', () => {
         memberId: 'm1',
         displayNameSnapshot: 'Member One',
         serviceKey: 'service-1',
+        servicePart: 1,
       }),
     ).toBe(false);
 
@@ -64,6 +69,7 @@ describe('firestoreRepository helpers', () => {
         memberId: 'm1',
         displayNameSnapshot: 'Member One',
         serviceKey: 'service-1',
+        servicePart: 1,
         submittedAt: {},
         extra: true,
       }),
@@ -102,6 +108,7 @@ describe('firestoreRepository helpers', () => {
           memberId: 'm1',
           displayNameSnapshot: 'Member One',
           serviceKey: 'service-1',
+          servicePart: 1,
         },
         member,
         config,
@@ -110,6 +117,7 @@ describe('firestoreRepository helpers', () => {
       memberId: 'm1',
       displayNameSnapshot: 'Member One',
       serviceKey: 'service-1',
+      servicePart: 1,
     });
 
     expect(() =>
@@ -118,6 +126,7 @@ describe('firestoreRepository helpers', () => {
           memberId: 'm1',
           displayNameSnapshot: 'Wrong Name',
           serviceKey: 'service-1',
+          servicePart: 1,
         },
         member,
         config,
@@ -130,6 +139,7 @@ describe('firestoreRepository helpers', () => {
           memberId: 'm1',
           displayNameSnapshot: 'Member One',
           serviceKey: 'old-service',
+          servicePart: 1,
         },
         member,
         config,
@@ -147,6 +157,7 @@ describe('firestoreRepository helpers', () => {
           memberId: 'm1',
           displayNameSnapshot: 'Member One',
           serviceKey: 'service-1',
+          servicePart: 1,
         },
         submittedAt,
       ),
@@ -154,12 +165,27 @@ describe('firestoreRepository helpers', () => {
       memberId: 'm1',
       displayNameSnapshot: 'Member One',
       serviceKey: 'service-1',
+      servicePart: 1,
       submittedAt,
     });
   });
 });
 
 describe('createFirestoreRepository', () => {
+  it('uses a normalized prefix query capped at ten member documents', async () => {
+    const queries: unknown[][] = [];
+    const repository = createFirestoreRepository(makeFirestoreForRepository(queries));
+
+    await repository.searchRegisteredMembers('  Member  ', 99);
+
+    expect(queries[0]).toEqual([
+      { fieldPath: 'searchName', opStr: '>=', value: 'member' },
+      { fieldPath: 'searchName', opStr: '<=', value: 'member\uf8ff' },
+      { fieldPath: 'searchName', directionStr: 'asc' },
+      { limit: 10 },
+    ]);
+  });
+
   it('uses injected Firestore-like operations without credentials', async () => {
     const serverTimestamp = { __type: 'serverTimestamp' };
     const calls: Array<readonly unknown[]> = [];
@@ -207,9 +233,8 @@ describe('createFirestoreRepository', () => {
           },
         ],
       }),
-      addDoc: async (ref, data) => {
-        calls.push(['addDoc', ref, data]);
-        return { id: 'submission-1' };
+      setDoc: async (ref, data) => {
+        calls.push(['setDoc', ref, data]);
       },
       query(ref, ...constraints) {
         calls.push(['query', ref, constraints]);
@@ -235,7 +260,7 @@ describe('createFirestoreRepository', () => {
 
     const repository = createFirestoreRepository(firestore);
 
-    await expect(repository.listRegisteredMembers()).resolves.toEqual([
+    await expect(repository.searchRegisteredMembers('member')).resolves.toEqual([
       {
         memberId: 'm1',
         displayLabel: 'Member One',
@@ -244,13 +269,15 @@ describe('createFirestoreRepository', () => {
       },
     ]);
     await expect(repository.getCurrentServiceConfig()).resolves.toEqual({ serviceKey: 'service-1' });
+    await expect(repository.getServiceConfig('service-1')).resolves.toEqual({ serviceKey: 'service-1' });
     await expect(
       repository.submitAttendance({
         memberId: 'm1',
         displayNameSnapshot: 'Member One',
         serviceKey: 'service-1',
+        servicePart: 1,
       }),
-    ).resolves.toEqual({ id: 'submission-1' });
+    ).resolves.toEqual({ id: 'm1' });
 
     expect(calls).toContainEqual(['doc', ['members', 'm1']]);
     expect(calls).toContainEqual(['doc', ['serviceConfig', 'currentServiceKey']]);
@@ -259,12 +286,13 @@ describe('createFirestoreRepository', () => {
     expect(calls).toEqual(
       expect.arrayContaining([
         expect.arrayContaining([
-          'addDoc',
+          'setDoc',
           expect.anything(),
           {
             memberId: 'm1',
             displayNameSnapshot: 'Member One',
             serviceKey: 'service-1',
+            servicePart: 1,
             submittedAt: serverTimestamp,
           },
         ]),
@@ -285,7 +313,7 @@ describe('createFirestoreRepository', () => {
       { limit: 7 },
     ]));
     expect(queries[1]).toEqual(expect.arrayContaining([
-      { limit: 100 },
+      { limit: 2_000 },
     ]));
     expect(queries[2]).toEqual(expect.arrayContaining([
       { fieldPath: 'memberId', opStr: '==', value: 'm1' },
@@ -331,7 +359,7 @@ describe('createFirestoreRepository', () => {
       ],
     });
 
-    await expect(createFirestoreRepository(firestore).listRegisteredMembers()).resolves.toEqual([
+    await expect(createFirestoreRepository(firestore).searchRegisteredMembers('member')).resolves.toEqual([
       {
         memberId: 'm1',
         displayLabel: 'Member One',
@@ -348,9 +376,68 @@ describe('createFirestoreRepository', () => {
       memberExists: false,
     });
     await expect(createFirestoreRepository(firestore).submitAttendance({
-      memberId: 'missing', displayNameSnapshot: 'Missing', serviceKey: '2026-08-10',
+      memberId: 'missing', displayNameSnapshot: 'Missing', serviceKey: '2026-08-10', servicePart: 1,
     })).rejects.toThrow(/missing or invalid/);
     expect(writes).toBe(0);
+  });
+
+  it('keeps the first service part when the same member scans again', async () => {
+    let writes = 0;
+    const firestore = makeFirestoreForRepository([], {
+      onWrite: () => { writes += 1; },
+      attendanceDocs: [
+        {
+          id: 'existing-attendance',
+          exists: () => true,
+          data: () => ({
+            memberId: 'm1',
+            displayNameSnapshot: 'Member One',
+            serviceKey: '2026-08-10',
+            servicePart: 1,
+            submittedAt: new Date('2026-08-10T00:30:00.000Z'),
+          }),
+        },
+      ],
+    });
+
+    await expect(createFirestoreRepository(firestore).submitAttendance({
+      memberId: 'm1',
+      displayNameSnapshot: 'Member One',
+      serviceKey: '2026-08-10',
+      servicePart: 3,
+    })).resolves.toMatchObject({
+      id: 'existing-attendance',
+      servicePart: 1,
+    });
+    expect(writes).toBe(0);
+  });
+
+  it('recovers the first record when concurrent scans race to create the same member document', async () => {
+    const concurrentlyCreated = {
+      id: 'm1',
+      exists: () => true,
+      data: () => ({
+        memberId: 'm1',
+        displayNameSnapshot: 'Member One',
+        serviceKey: '2026-08-10',
+        servicePart: 1,
+        submittedAt: new Date('2026-08-10T00:30:00.000Z'),
+      }),
+    };
+    const firestore = makeFirestoreForRepository([], {
+      writeError: new Error('already exists'),
+      attendanceDocsAfterWrite: [concurrentlyCreated],
+    });
+
+    await expect(createFirestoreRepository(firestore).submitAttendance({
+      memberId: 'm1',
+      displayNameSnapshot: 'Member One',
+      serviceKey: '2026-08-10',
+      servicePart: 3,
+    })).resolves.toMatchObject({
+      id: 'm1',
+      servicePart: 1,
+    });
   });
 
   it('does not write when the selected member snapshot has no document id', async () => {
@@ -364,6 +451,7 @@ describe('createFirestoreRepository', () => {
       memberId: 'm1',
       displayNameSnapshot: 'Member One',
       serviceKey: '2026-08-10',
+      servicePart: 1,
     })).rejects.toThrow(/missing or invalid/);
     expect(writes).toBe(0);
   });
@@ -387,6 +475,7 @@ describe('createFirestoreRepository', () => {
             memberId: 'm1',
             displayNameSnapshot: 'Member One',
             serviceKey: '2026-08-10',
+            servicePart: 2,
             submittedAt,
           }),
         },
@@ -401,6 +490,7 @@ describe('createFirestoreRepository', () => {
           memberId: 'm1',
           displayNameSnapshot: 'Member One',
           serviceKey: '2026-08-10',
+          servicePart: 2,
           submittedAt,
         },
       ],
@@ -414,7 +504,9 @@ interface FirestoreRepositoryFixtureOptions {
   memberSnapshotId?: string | null;
   registeredMemberDocs?: ReadonlyArray<FirestoreDocumentSnapshot<unknown>>;
   attendanceDocs?: ReadonlyArray<FirestoreDocumentSnapshot<unknown>>;
+  attendanceDocsAfterWrite?: ReadonlyArray<FirestoreDocumentSnapshot<unknown>>;
   collectionPaths?: string[][];
+  writeError?: Error;
 }
 
 function makeFirestoreForRepository(
@@ -427,8 +519,11 @@ function makeFirestoreForRepository(
     memberSnapshotId = 'm1',
     registeredMemberDocs = [],
     attendanceDocs = [],
+    attendanceDocsAfterWrite = attendanceDocs,
     collectionPaths = [],
+    writeError,
   } = options;
+  let writeAttempted = false;
 
   return {
     collection: (path) => { collectionPaths.push([...path]); return { path }; },
@@ -453,9 +548,13 @@ function makeFirestoreForRepository(
     getDocs: async (ref) => ({
       docs: (ref as { path?: readonly string[] }).path?.[0] === 'members'
         ? registeredMemberDocs
-        : attendanceDocs,
+        : writeAttempted ? attendanceDocsAfterWrite : attendanceDocs,
     }),
-    addDoc: async () => { onWrite(); return { id: 'id' }; },
+    setDoc: async () => {
+      writeAttempted = true;
+      onWrite();
+      if (writeError) throw writeError;
+    },
     query: (ref, ...constraints) => {
       queries.push(constraints);
       return { ...(ref as { path?: readonly string[] }), constraints };

@@ -10,16 +10,16 @@ service cloud.firestore {
       return get(memberPath(memberId)).data;
     }
 
-    function currentServicePath() {
-      return /databases/$(database)/documents/serviceConfig/currentServiceKey;
+    function serviceSessionPath(serviceKey) {
+      return /databases/$(database)/documents/serviceSessions/$(serviceKey);
     }
 
-    function currentServiceKey() {
-      return get(currentServicePath()).data.serviceKey;
+    function serviceSessionDocument(serviceKey) {
+      return get(serviceSessionPath(serviceKey)).data;
     }
 
     function hasPublicMemberFields(data) {
-      return data.keys().hasOnly(['memberId', 'displayLabel', 'searchName', 'sortKey'])
+      return data.keys().hasOnly(['memberId', 'displayLabel', 'searchName', 'sortKey', 'cohort'])
         && data.keys().hasAll(['memberId', 'displayLabel', 'searchName', 'sortKey']);
     }
 
@@ -33,7 +33,11 @@ service cloud.firestore {
         && data.searchName is string
         && data.searchName.size() > 0
         && data.sortKey is string
-        && data.sortKey.size() > 0;
+        && data.sortKey.size() > 0
+        && (
+          !data.keys().hasAny(['cohort'])
+          || (data.cohort is string && data.cohort.size() > 0)
+        );
     }
 
     function isCurrentServiceConfig(data) {
@@ -47,6 +51,7 @@ service cloud.firestore {
           'memberId',
           'displayNameSnapshot',
           'serviceKey',
+          'servicePart',
           'submittedAt',
           'createdAtClient',
         ])
@@ -54,6 +59,7 @@ service cloud.firestore {
           'memberId',
           'displayNameSnapshot',
           'serviceKey',
+          'servicePart',
           'submittedAt',
         ]);
     }
@@ -68,6 +74,7 @@ service cloud.firestore {
         && request.resource.data.serviceKey is string
         && request.resource.data.serviceKey.matches('^\\d{4}-\\d{2}-\\d{2}$')
         && request.resource.data.submittedAt == request.time
+        && request.resource.data.servicePart in [1, 2, 3]
         && (
           !request.resource.data.keys().hasAny(['createdAtClient'])
           || request.resource.data.createdAtClient is timestamp
@@ -84,14 +91,14 @@ service cloud.firestore {
           == request.resource.data.displayNameSnapshot;
     }
 
-    function hasCurrentServiceConfig() {
-      return exists(currentServicePath())
-        && isCurrentServiceConfig(get(currentServicePath()).data);
+    function hasServiceSession(serviceKey) {
+      return exists(serviceSessionPath(serviceKey))
+        && isCurrentServiceConfig(serviceSessionDocument(serviceKey))
+        && serviceSessionDocument(serviceKey).serviceKey == serviceKey;
     }
 
-    function usesCurrentServiceKey(serviceKey) {
-      return hasCurrentServiceConfig()
-        && serviceKey == currentServiceKey()
+    function usesKnownServiceKey(serviceKey) {
+      return hasServiceSession(serviceKey)
         && request.resource.data.serviceKey == serviceKey;
     }
 
@@ -99,15 +106,16 @@ service cloud.firestore {
       return hasAttendanceFields()
         && hasAttendanceFieldTypes()
         && hasAllowlistedMemberSnapshot()
-        && usesCurrentServiceKey(serviceKey);
+        && usesKnownServiceKey(serviceKey);
     }
 
     match /members/{memberId} {
       allow get: if isPublicMember(memberId, resource.data);
-      // Query rules are not filters: list access relies on the immutable,
-      // dummy-only seed contract and validates shape on direct gets/submission creates.
+      // Name search is prefix-bounded in the client and capped here to keep
+      // public reads small. Query rules are not filters, so the seed shape
+      // remains a required data boundary.
       allow list: if request.query.limit != null
-        && request.query.limit <= 2000;
+        && request.query.limit <= 10;
       allow create, update, delete: if false;
     }
 
@@ -120,15 +128,22 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /serviceSessions/{serviceKey} {
+      allow get: if isCurrentServiceConfig(resource.data)
+        && resource.data.serviceKey == serviceKey;
+      allow list, create, update, delete: if false;
+    }
+
     match /attendanceServices/{serviceKey}/submissions/{submissionId} {
-      allow create: if isAttendanceCreate(serviceKey);
-      allow get: if serviceKey == currentServiceKey()
+      allow create: if submissionId == request.resource.data.memberId
+        && isAttendanceCreate(serviceKey);
+      allow get: if hasServiceSession(serviceKey)
         && resource.data.serviceKey == serviceKey;
       // The service path is the query boundary; do not add an unprovable
       // resource.data predicate to this list rule.
-      allow list: if serviceKey == currentServiceKey()
+      allow list: if hasServiceSession(serviceKey)
         && request.query.limit != null
-        && request.query.limit <= 100;
+        && request.query.limit <= 2000;
       allow update, delete: if false;
     }
   }

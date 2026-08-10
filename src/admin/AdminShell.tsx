@@ -1,5 +1,8 @@
-import { useEffect, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useState, type MouseEvent } from 'react'
 
+import type { AttendanceRepository } from '../lib/attendanceRepository'
+import { parseAttendanceServiceDate } from '../lib/attendanceUrl'
+import type { ServiceKey } from '../domain/types'
 import AdminDashboard from './AdminDashboard'
 import AttendanceManagement from './AttendanceManagement'
 import QRGeneration from './QRGeneration'
@@ -16,23 +19,24 @@ interface AdminViewDefinition {
 export const ADMIN_VIEWS: ReadonlyArray<AdminViewDefinition> = [
   {
     id: 'dashboard',
-    label: 'Dashboard',
+    label: '대시보드',
     description: '관리 현황을 한눈에 확인하는 화면입니다.',
   },
   {
     id: 'qr-generation',
-    label: 'QR Generation',
-    description: '출석용 QR 생성을 준비하는 화면입니다.',
+    label: 'QR 관리',
+    description: '출석용 QR을 관리하는 화면입니다.',
   },
   {
     id: 'attendance-management',
-    label: 'Attendance Management',
+    label: '출석 관리',
     description: '출석 관리를 준비하는 화면입니다.',
   },
 ]
 
 const DEFAULT_ADMIN_VIEW: AdminViewId = 'dashboard'
 const ADMIN_VIEW_QUERY = 'view'
+const ADMIN_SERVICE_DATE_QUERY = 'serviceDate'
 
 function isAdminViewId(value: string | null): value is AdminViewId {
   return ADMIN_VIEWS.some((view) => view.id === value)
@@ -65,14 +69,32 @@ function updateAdminViewUrl(view: AdminViewId): void {
   window.history.pushState({}, '', nextUrl)
 }
 
-export default function AdminShell() {
+function updateAdminServiceDateUrl(serviceDate: ServiceKey | null): void {
+  const url = new URL(window.location.href)
+  if (serviceDate) {
+    url.searchParams.set(ADMIN_SERVICE_DATE_QUERY, serviceDate)
+  } else {
+    url.searchParams.delete(ADMIN_SERVICE_DATE_QUERY)
+  }
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+}
+
+export interface AdminShellProps {
+  repository: AttendanceRepository
+}
+
+export default function AdminShell({ repository }: AdminShellProps) {
   const [activeView, setActiveView] = useState<AdminViewId>(() => (
     getAdminViewFromSearch(window.location.search)
+  ))
+  const [selectedServiceDate, setSelectedServiceDate] = useState<ServiceKey | undefined>(() => (
+    parseAttendanceServiceDate(window.location.search)
   ))
 
   useEffect(() => {
     const handlePopState = () => {
       setActiveView(getAdminViewFromSearch(window.location.search))
+      setSelectedServiceDate(parseAttendanceServiceDate(window.location.search))
     }
 
     window.addEventListener('popstate', handlePopState)
@@ -91,12 +113,16 @@ export default function AdminShell() {
     setActiveView(view)
   }
 
+  const handleServiceDateChange = useCallback((date: ServiceKey | null) => {
+    setSelectedServiceDate(date ?? undefined)
+    updateAdminServiceDateUrl(date)
+  }, [])
+
   return (
     <div className="admin-shell-layout">
       <aside className="admin-sidebar" aria-label="관리자 영역">
         <div className="admin-brand">
-          <p className="admin-brand-eyebrow">Admin</p>
-          <strong>관리자</strong>
+          <strong>대흥교회<br />출석관리 시스템</strong>
         </div>
 
         <nav className="admin-navigation" aria-label="관리자 메뉴">
@@ -117,14 +143,17 @@ export default function AdminShell() {
         </nav>
       </aside>
 
-      <main className="admin-main" aria-labelledby="admin-shell-title">
-        <header className="admin-page-header">
-          <div>
-            <p className="admin-page-eyebrow">Admin workspace</p>
-            <h1 id="admin-shell-title">{selectedView.label}</h1>
-          </div>
-        </header>
-        {selectedView.id === 'dashboard' ? <AdminDashboard /> : selectedView.id === 'qr-generation' ? <QRGeneration /> : <AttendanceManagement />}
+      <main className="admin-main" aria-label="관리자 화면">
+        {selectedView.id === 'dashboard'
+          ? <AdminDashboard />
+          : selectedView.id === 'qr-generation'
+            ? (
+              <QRGeneration
+                selectedDate={selectedServiceDate}
+                onDateChange={handleServiceDateChange}
+              />
+            )
+            : <AttendanceManagement repository={repository} serviceDate={selectedServiceDate} />}
       </main>
     </div>
   )

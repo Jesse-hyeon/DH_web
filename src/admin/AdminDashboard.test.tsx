@@ -3,8 +3,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import AdminDashboard from './AdminDashboard'
-import { ADMIN_DEMO_FIXTURES } from './demoData'
-import { selectDashboardAggregates, selectLongTermAbsentees, selectNewMembers } from './selectors'
+import { ADMIN_DEMO_FIXTURES, ADMIN_DEMO_REFERENCE_DATE } from './demoData'
+import {
+  selectLongTermAbsentees,
+  selectNewMembers,
+  selectServiceAverages,
+} from './selectors'
 
 interface RenderedDashboard {
   container: HTMLDivElement
@@ -23,17 +27,6 @@ async function renderDashboard(): Promise<RenderedDashboard> {
   return { container, root }
 }
 
-function metricValue(container: HTMLElement, label: string): string {
-  const card = Array.from(container.querySelectorAll<HTMLElement>('.admin-metric-card'))
-    .find((candidate) => candidate.querySelector('.admin-card-label')?.textContent === label)
-
-  if (!card) {
-    throw new Error(`Unable to find metric card: ${label}`)
-  }
-
-  return card.querySelector('.admin-metric-value')?.textContent ?? ''
-}
-
 describe('AdminDashboard', () => {
   let rendered: RenderedDashboard | null = null
 
@@ -46,32 +39,39 @@ describe('AdminDashboard', () => {
     document.body.innerHTML = ''
   })
 
-  it('renders metric cards and charts from the deterministic selectors', async () => {
+  it('renders dashboard charts from the deterministic selectors', async () => {
     rendered = await renderDashboard()
     const container = rendered.container
-    const dashboard = selectDashboardAggregates(ADMIN_DEMO_FIXTURES)
 
     expect(container.querySelector('[data-testid="admin-dashboard"]')).toBeTruthy()
-    expect(container.querySelectorAll('.admin-metric-card')).toHaveLength(7)
-    expect(metricValue(container, '전체 회원')).toBe(dashboard.memberCount.toLocaleString('ko-KR'))
-    expect(metricValue(container, '주간 평균 출석')).toBe(
-      `${Math.round(dashboard.weeklyAverage).toLocaleString('ko-KR')}명`,
-    )
-    expect(metricValue(container, '신규 회원')).toBe(`${dashboard.newMemberCount}명`)
-    expect(metricValue(container, '장기 결석')).toBe(`${dashboard.longTermAbsenteeCount}명`)
-    dashboard.serviceAverages.forEach((average) => {
-      expect(metricValue(container, `${average.part}부 평균 출석`)).toBe(
-        `${Math.round(average.rate * 100)}%`,
-      )
-    })
+    expect(container.querySelector('.admin-metric-grid')).toBeNull()
+    expect(container.querySelectorAll('.admin-metric-card')).toHaveLength(0)
 
-    expect(container.querySelectorAll('.admin-trend-column')).toHaveLength(
-      dashboard.weeklySummaries.length,
+    expect(container.querySelector('.admin-trend-line-chart')).toBeTruthy()
+    expect(container.querySelectorAll('.admin-trend-point')).toHaveLength(4)
+    expect(container.querySelectorAll('.admin-trend-date')).toHaveLength(4)
+    expect(container.textContent).not.toContain('주차')
+    expect(container.querySelectorAll('.admin-service-column')).toHaveLength(
+      3,
     )
-    expect(container.querySelectorAll('.admin-service-row')).toHaveLength(
-      dashboard.serviceAverages.length,
-    )
-    expect(container.querySelector('[aria-label="최근 4주 주차별 출석 인원 막대 그래프"]'))
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="예배 출석 날짜"]')?.value)
+      .toBe(ADMIN_DEMO_REFERENCE_DATE)
+    const serviceAverages = selectServiceAverages(ADMIN_DEMO_FIXTURES, {
+      dateRange: { from: ADMIN_DEMO_REFERENCE_DATE, to: ADMIN_DEMO_REFERENCE_DATE },
+    })
+    expect(serviceAverages.map((average) => average.attendedCount))
+      .toEqual([...serviceAverages.map((average) => average.attendedCount)].sort((a, b) => a - b))
+    const maxAttendedCount = Math.max(...serviceAverages.map((average) => average.attendedCount), 1)
+    serviceAverages.forEach((average) => {
+      const row = container.querySelector(`[data-service-part="${average.part}"]`)
+      expect(row?.querySelector('.admin-service-column-value')?.textContent)
+        .toBe(`${average.attendedCount.toLocaleString('ko-KR')}명`)
+      expect(row?.querySelector('.admin-service-column-bar')?.getAttribute('style'))
+        .toContain(`height: ${Math.round((average.attendedCount / maxAttendedCount) * 100)}%`)
+      expect(row?.textContent).toContain(`${average.attendedCount.toLocaleString('ko-KR')}명 참석`)
+      expect(row?.textContent).not.toContain('명 대상')
+    })
+    expect(container.querySelector('[aria-label="최근 4주 날짜별 출석 인원 선 그래프"]'))
       .toBeTruthy()
   })
 
@@ -87,5 +87,40 @@ describe('AdminDashboard', () => {
     expect(rendered.container.querySelectorAll('.admin-member-list li').length).toBeLessThanOrEqual(10)
     expect(text).not.toContain('admin-demo-member-')
     expect(text).not.toContain('memberId')
+  })
+
+  it('offers recent four-week and three-month ranges', async () => {
+    rendered = await renderDashboard()
+    const periodSelect = rendered.container.querySelector<HTMLSelectElement>('select[aria-label="출석 추이 기간"]')
+
+    expect(periodSelect?.value).toBe('last-4-weeks')
+    expect(Array.from(periodSelect?.options ?? []).map((option) => option.value))
+      .toEqual(['last-4-weeks', 'last-3-months'])
+    expect(rendered.container.querySelectorAll('.admin-trend-point')).toHaveLength(4)
+    expect(rendered.container.querySelector('button')).toBeNull()
+  })
+
+  it('updates service attendance bars for the selected date', async () => {
+    rendered = await renderDashboard()
+    const dateInput = rendered.container.querySelector<HTMLInputElement>('input[aria-label="예배 출석 날짜"]')
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+
+    if (!dateInput || !setter) {
+      throw new Error('Unable to set service attendance date')
+    }
+
+    await act(async () => {
+      setter.call(dateInput, '2026-08-03')
+      dateInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    expect(dateInput.value).toBe('2026-08-03')
+    const expected = selectServiceAverages(ADMIN_DEMO_FIXTURES, {
+      dateRange: { from: '2026-08-03', to: '2026-08-03' },
+    })
+    expected.forEach((average) => {
+      const row = rendered?.container.querySelector(`[data-service-part="${average.part}"]`)
+      expect(row?.textContent).toContain(`${average.attendedCount.toLocaleString('ko-KR')}명 참석`)
+    })
   })
 })

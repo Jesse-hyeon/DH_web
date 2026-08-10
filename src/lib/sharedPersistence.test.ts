@@ -5,7 +5,6 @@ import {
   COLLECTIONS,
   CURRENT_SERVICE_KEY_DOCUMENT,
   createFirestoreRepository,
-  type FirestoreDocumentRef,
   type FirestoreDocumentSnapshot,
   type FirestoreLike,
 } from './firestoreRepository'
@@ -17,7 +16,7 @@ type FakeReference = {
 }
 
 type FakeConstraint =
-  | { kind: 'where'; fieldPath: string; value: unknown }
+  | { kind: 'where'; fieldPath: string; op: '==' | 'in' | '>=' | '<='; value: unknown }
   | { kind: 'orderBy'; fieldPath: string; direction: 'asc' | 'desc' }
   | { kind: 'limit'; value: number }
 
@@ -59,7 +58,19 @@ function createSharedBackend(): SharedBackend {
 
     for (const constraint of constraints) {
       if (constraint.kind === 'where') {
-        matches = matches.filter((document) => document.data[constraint.fieldPath] === constraint.value)
+        matches = matches.filter((document) => {
+          const fieldValue = document.data[constraint.fieldPath]
+          if (constraint.op === '==') {
+            return fieldValue === constraint.value
+          }
+          if (constraint.op === 'in') {
+            return Array.isArray(constraint.value) && constraint.value.includes(fieldValue)
+          }
+          if (constraint.op === '>=') {
+            return String(fieldValue) >= String(constraint.value)
+          }
+          return String(fieldValue) <= String(constraint.value)
+        })
       }
     }
 
@@ -98,17 +109,16 @@ function createSharedBackend(): SharedBackend {
         docs: matchingDocuments(fakeReference, true).map(makeSnapshot),
       }
     },
-    async addDoc(reference, data) {
-      const collectionPath = (reference as FakeReference).path
-      const id = `submission-${String(documents.size).padStart(3, '0')}`
+    async setDoc(reference, data) {
+      const documentPath = (reference as FakeReference).path
+      const id = documentPath.at(-1) as string
       const storedData = Object.fromEntries(Object.entries(data as Record<string, unknown>).map(([key, value]) => [
         key,
         value && typeof value === 'object' && (value as { kind?: string }).kind === 'serverTimestamp'
           ? new Date('2026-08-10T01:00:00.000Z')
           : value,
       ]))
-      documents.set(documentKey([...collectionPath, id]), { id, data: storedData })
-      return { id, ref: documentReference([...collectionPath, id]) as FirestoreDocumentRef }
+      documents.set(documentKey(documentPath), { id, data: storedData })
     },
     query(reference, ...constraints) {
       const fakeReference = reference as FakeReference
@@ -118,8 +128,8 @@ function createSharedBackend(): SharedBackend {
         constraints: constraints as FakeConstraint[],
       } as FakeReference
     },
-    where(fieldPath, _opStr, value) {
-      return { kind: 'where', fieldPath, value }
+    where(fieldPath, op, value) {
+      return { kind: 'where', fieldPath, op, value }
     },
     orderBy(fieldPath, direction = 'asc') {
       return { kind: 'orderBy', fieldPath, direction }
@@ -153,6 +163,10 @@ function seedPublicData(backend: SharedBackend): void {
     id: CURRENT_SERVICE_KEY_DOCUMENT,
     data: { serviceKey: '2026-08-10' },
   })
+  backend.documents.set(`${COLLECTIONS.serviceSessions}/2026-08-10`, {
+    id: '2026-08-10',
+    data: { serviceKey: '2026-08-10' },
+  })
 }
 
 describe('Firestore repository shared persistence contract', () => {
@@ -162,7 +176,7 @@ describe('Firestore repository shared persistence contract', () => {
     const attendeeRepository = createFirestoreRepository(backend.firestore)
     const adminRepository = createFirestoreRepository(backend.firestore)
 
-    await expect(attendeeRepository.listRegisteredMembers()).resolves.toEqual([
+    await expect(attendeeRepository.searchRegisteredMembers('김현우')).resolves.toEqual([
       {
         memberId: 'm-001',
         displayLabel: '김현우 A',
@@ -175,8 +189,9 @@ describe('Firestore repository shared persistence contract', () => {
       memberId: 'm-001',
       displayNameSnapshot: '김현우 A',
       serviceKey: '2026-08-10',
+      servicePart: 1,
     })
-    expect([...backend.documents.keys()]).toContain('attendanceServices/2026-08-10/submissions/submission-002')
+    expect([...backend.documents.keys()]).toContain('attendanceServices/2026-08-10/submissions/m-001')
 
     const firstAdminRead = await adminRepository.getCurrentServiceAttendance()
     expect(firstAdminRead.totalCount).toBe(1)

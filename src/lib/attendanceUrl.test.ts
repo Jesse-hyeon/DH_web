@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { validateAttendanceTargetUrl } from './attendanceUrl'
+import {
+  parseAttendanceServicePart,
+  parseAttendanceServiceDate,
+  validateAttendanceTargetUrl,
+  withAttendanceSession,
+} from './attendanceUrl'
 
 describe('attendance URL validation', () => {
   it('accepts http attendance URLs with optional query and hash', () => {
@@ -35,5 +40,14 @@ describe('attendance URL validation', () => {
       ok: false,
       error: expect.stringContaining('/attend'),
     })
+  })
+
+  it('adds and parses the service part without losing existing query values', () => {
+    expect(withAttendanceSession('https://example.test/attend?source=qr', '2026-08-16', 2))
+      .toBe('https://example.test/attend?source=qr&serviceDate=2026-08-16&servicePart=2')
+    expect(parseAttendanceServiceDate('?serviceDate=2026-08-16&servicePart=3')).toBe('2026-08-16')
+    expect(parseAttendanceServiceDate('?serviceDate=2026-02-30')).toBeUndefined()
+    expect(parseAttendanceServicePart('?source=qr&servicePart=3')).toBe(3)
+    expect(parseAttendanceServicePart('?servicePart=4')).toBeUndefined()
   })
 })

@@ -3,7 +3,6 @@ import process from 'node:process'
 
 import { getApps, initializeApp } from 'firebase/app'
 import {
-  addDoc,
   collection,
   connectFirestoreEmulator,
   doc,
@@ -15,6 +14,7 @@ import {
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   where,
 } from 'firebase/firestore'
 
@@ -84,7 +84,7 @@ const firestore = getFirestore(app)
 connectFirestoreEmulator(firestore, parsedHost.host, parsedHost.port)
 
 try {
-  const membersSnapshot = await getDocs(query(collection(firestore, 'members'), limit(2000)))
+  const membersSnapshot = await getDocs(query(collection(firestore, 'members'), limit(10)))
   const configSnapshot = await getDoc(doc(firestore, 'serviceConfig', 'currentServiceKey'))
 
   if (!configSnapshot.exists() || membersSnapshot.empty) {
@@ -105,14 +105,19 @@ try {
     serviceKey,
     'submissions',
   )
-  const created = await addDoc(submissions, {
-    memberId: member.memberId,
-    displayNameSnapshot: member.displayLabel,
-    serviceKey,
-    submittedAt: serverTimestamp(),
-  })
-  const rowsSnapshot = await getDocs(query(submissions, orderBy('submittedAt', 'desc'), limit(100)))
-  const countSnapshot = await getCountFromServer(query(submissions, limit(100)))
+  const created = doc(submissions, member.memberId)
+  const existingSubmission = await getDoc(created)
+  if (!existingSubmission.exists()) {
+    await setDoc(created, {
+      memberId: member.memberId,
+      displayNameSnapshot: member.displayLabel,
+      serviceKey,
+      servicePart: 1,
+      submittedAt: serverTimestamp(),
+    })
+  }
+  const rowsSnapshot = await getDocs(query(submissions, orderBy('submittedAt', 'desc'), limit(2000)))
+  const countSnapshot = await getCountFromServer(query(submissions, limit(2000)))
   const historySnapshot = await getDocs(query(
     submissions,
     where('memberId', '==', member.memberId),

@@ -17,7 +17,7 @@ export interface AdminDemoServiceSession {
   part: AdminDemoServicePart
   date: AdminDemoDate
   startsAt: string
-  weekNumber: 1 | 2 | 3 | 4
+  weekNumber: number
   label: string
 }
 
@@ -27,7 +27,7 @@ export interface AdminDemoAttendanceEvent {
   sessionId: string
   date: AdminDemoDate
   part: AdminDemoServicePart
-  weekNumber: 1 | 2 | 3 | 4
+  weekNumber: number
   status: AdminDemoEventStatus
 }
 
@@ -47,7 +47,7 @@ export interface AdminDemoServiceAggregateInput {
 
 /** Narrow input for weekly aggregates used by later selectors. */
 export interface AdminDemoWeeklyAggregateInput {
-  weekNumber: 1 | 2 | 3 | 4
+  weekNumber: number
   events: ReadonlyArray<AdminDemoAttendanceEvent>
   sessions: ReadonlyArray<AdminDemoServiceSession>
 }
@@ -65,7 +65,7 @@ export interface AdminDemoServiceAverage {
 }
 
 export interface AdminDemoWeeklySummary {
-  weekNumber: 1 | 2 | 3 | 4
+  weekNumber: number
   dateRange: AdminDemoDateRange
   attendedCount: number
   eligibleCount: number

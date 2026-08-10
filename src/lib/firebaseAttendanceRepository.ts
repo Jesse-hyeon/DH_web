@@ -1,6 +1,5 @@
 import { getApp, getApps, initializeApp, type FirebaseOptions } from 'firebase/app'
 import {
-  addDoc,
   collection,
   connectFirestoreEmulator,
   doc,
@@ -12,6 +11,7 @@ import {
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   where,
   type CollectionReference,
   type DocumentReference,
@@ -53,11 +53,8 @@ function createFirestoreLike(firestore: Firestore): FirestoreLike {
     getDocs(reference) {
       return getDocs(reference as Query | CollectionReference)
     },
-    addDoc(reference, data) {
-      return addDoc(reference as CollectionReference, data as Record<string, unknown>).then((created) => ({
-        id: created.id,
-        ref: created,
-      }))
+    setDoc(reference, data) {
+      return setDoc(reference as DocumentReference, data as Record<string, unknown>)
     },
     query(reference, ...constraints) {
       return query(reference as CollectionReference, ...(constraints as QueryConstraint[]))

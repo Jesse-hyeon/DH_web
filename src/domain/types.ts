@@ -4,6 +4,8 @@ export type ISODate = string
 /** The MVP service bucket key, serialized as YYYY-MM-DD in Asia/Seoul. */
 export type ServiceKey = ISODate
 
+export type ServicePart = 1 | 2 | 3
+
 export type MemberId = string
 
 export interface Member {
@@ -15,6 +17,7 @@ export interface AttendanceSubmission {
   memberId: MemberId
   displayNameSnapshot: string
   serviceKey: ServiceKey
+  servicePart: ServicePart
   submittedAt: Date
   createdAtClient?: Date
 }

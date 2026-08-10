@@ -13,11 +13,13 @@ import type {
 } from './types'
 
 const SERVICE_PARTS = [1, 2, 3] as const
-const WEEK_NUMBERS = [1, 2, 3, 4] as const
+const RECENT_WEEK_COUNT = 4
 const DAY_MS = 24 * 60 * 60 * 1_000
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
 export type AdminDemoPeriod =
+  | 'last-4-weeks'
+  | 'last-3-months'
   | 'current-month'
   | 'last-6-months'
   | 'all'
@@ -32,6 +34,12 @@ export interface AdminDemoFilterOptions {
   servicePart?: AdminDemoServicePartFilter
   part?: AdminDemoServicePartFilter
   dateRange?: AdminDemoDateRange
+}
+
+function recentWeekNumbers(input: AdminDemoAggregateInput): number[] {
+  return [...new Set(input.sessions.map((session) => session.weekNumber))]
+    .sort((a, b) => a - b)
+    .slice(-RECENT_WEEK_COUNT)
 }
 
 export interface AdminDemoAttendanceRow {
@@ -149,11 +157,26 @@ export function selectPeriodDateRange(
     return { from: monthStart(input.referenceDate), to: input.referenceDate }
   }
 
+  if (canonical === 'last-4-weeks') {
+    return { from: addDays(input.referenceDate, -27), to: input.referenceDate }
+  }
+
+  if (canonical === 'last-3-months') {
+    return { from: addMonths(input.referenceDate, -2), to: input.referenceDate }
+  }
+
   // Six calendar months means the current month plus the five preceding months.
   return { from: addMonths(input.referenceDate, -5), to: input.referenceDate }
 }
 
 export const getPeriodDateRange = selectPeriodDateRange
+
+function weekNumbersInRange(input: AdminDemoAggregateInput, range: AdminDemoDateRange): number[] {
+  return [...new Set([
+    ...input.sessions.filter((session) => isDateInRange(session.date, range)).map((session) => session.weekNumber),
+    ...input.events.filter((event) => isDateInRange(event.date, range)).map((event) => event.weekNumber),
+  ])].sort((a, b) => a - b)
+}
 
 /** Date comparisons are string-safe because all admin dates are normalized ISO dates. */
 export function isDateInRange(date: AdminDemoDate, range: AdminDemoDateRange): boolean {
@@ -193,6 +216,32 @@ function countStatus(events: ReadonlyArray<AdminDemoAttendanceEvent>, status: Ad
   return events.filter((event) => event.status === status).length
 }
 
+function preferEarlierAttendance(
+  current: AdminDemoAttendanceEvent | undefined,
+  candidate: AdminDemoAttendanceEvent,
+): AdminDemoAttendanceEvent {
+  if (!current) {
+    return candidate
+  }
+  if (candidate.status === 'attended' && current.status !== 'attended') {
+    return candidate
+  }
+  if (candidate.status === current.status && candidate.part < current.part) {
+    return candidate
+  }
+  return current
+}
+
+/** Keeps one result per member/date; the first attended service is the one that counts. */
+function uniqueMemberDateEvents(events: ReadonlyArray<AdminDemoAttendanceEvent>): AdminDemoAttendanceEvent[] {
+  const eventsByMemberDate = new Map<string, AdminDemoAttendanceEvent>()
+  for (const event of events) {
+    const key = `${event.memberId}:${event.date}`
+    eventsByMemberDate.set(key, preferEarlierAttendance(eventsByMemberDate.get(key), event))
+  }
+  return [...eventsByMemberDate.values()]
+}
+
 export function selectNewMembers(input: AdminDemoAggregateInput): ReadonlyArray<AdminDemoMemberProfile> {
   const referenceTime = parseDate(input.referenceDate).getTime()
 
@@ -216,7 +265,7 @@ export function selectLongTermAbsentees(input: AdminDemoAggregateInput): Readonl
   }
 
   return input.members.filter((member) => (
-    WEEK_NUMBERS.every((weekNumber) => missedWeeksByMember.get(member.id)?.has(weekNumber) === true)
+    recentWeekNumbers(input).every((weekNumber) => missedWeeksByMember.get(member.id)?.has(weekNumber) === true)
   ))
 }
 
@@ -247,12 +296,43 @@ export function selectWeeklySummaries(
   const range = options.dateRange ?? selectPeriodDateRange(input, options.period ?? 'all')
   const part = selectedPart(options)
 
-  return WEEK_NUMBERS.map((weekNumber) => {
+  return recentWeekNumbers(input).map((weekNumber) => {
     const weekEvents = events.filter((event) => event.weekNumber === weekNumber)
     const weekSessions = input.sessions.filter((session) => (
       session.weekNumber === weekNumber
       && isDateInRange(session.date, range)
       && (part === undefined || session.part === part)
+    ))
+    const dates = [
+      ...weekSessions.map((session) => session.date),
+      ...weekEvents.map((event) => event.date),
+    ]
+    const attendedCount = countStatus(weekEvents, 'attended')
+
+    return {
+      weekNumber,
+      dateRange: {
+        from: minDate(dates, input.referenceDate),
+        to: maxDate(dates, input.referenceDate),
+      },
+      attendedCount,
+      eligibleCount: weekEvents.length,
+      rate: attendanceRate(attendedCount, weekEvents.length),
+    }
+  })
+}
+
+/** Returns one weekly summary for each week represented in the requested date range. */
+export function selectWeeklySummariesInRange(
+  input: AdminDemoAggregateInput,
+  range: AdminDemoDateRange,
+): ReadonlyArray<AdminDemoWeeklySummary> {
+  const events = eventsForOptions(input, { dateRange: range })
+
+  return weekNumbersInRange(input, range).map((weekNumber) => {
+    const weekEvents = events.filter((event) => event.weekNumber === weekNumber)
+    const weekSessions = input.sessions.filter((session) => (
+      session.weekNumber === weekNumber && isDateInRange(session.date, range)
     ))
     const dates = [
       ...weekSessions.map((session) => session.date),
@@ -296,7 +376,7 @@ export function selectAttendanceRows(
   input: AdminDemoAggregateInput,
   options: AdminDemoFilterOptions = {},
 ): ReadonlyArray<AdminDemoAttendanceRow> {
-  const events = eventsForOptions(input, options)
+  const events = uniqueMemberDateEvents(eventsForOptions(input, options))
   const eventsByMember = new Map<string, AdminDemoAttendanceEvent[]>()
 
   for (const event of events) {

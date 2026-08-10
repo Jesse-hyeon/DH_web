@@ -1,10 +1,12 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import AttendanceManagement from './AttendanceManagement'
+import type { AttendanceRepository } from '../lib/attendanceRepository'
+import type { ServiceKey } from '../domain/types'
+import AttendanceManagement, { mergeCurrentServiceAttendance } from './AttendanceManagement'
 import { ADMIN_DEMO_FIXTURES } from './demoData'
-import { selectAttendanceRows, selectPeriodDateRange, selectSessionTotals } from './selectors'
+import { selectAttendanceRows, selectSessionTotals } from './selectors'
 import type { AdminDemoFixtureBundle } from './types'
 
 interface RenderedView {
@@ -12,27 +14,31 @@ interface RenderedView {
   root: Root
 }
 
-async function renderView(fixtures: AdminDemoFixtureBundle = ADMIN_DEMO_FIXTURES): Promise<RenderedView> {
+async function renderView(
+  fixtures: AdminDemoFixtureBundle = ADMIN_DEMO_FIXTURES,
+  repository?: AttendanceRepository,
+  serviceDate?: ServiceKey,
+): Promise<RenderedView> {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
 
   await act(async () => {
-    root.render(<AttendanceManagement fixtures={fixtures} />)
+    root.render(
+      <AttendanceManagement fixtures={fixtures} repository={repository} serviceDate={serviceDate} />,
+    )
+    await Promise.resolve()
   })
-
   return { container, root }
 }
 
-function setInputValue(element: HTMLInputElement | HTMLSelectElement, value: string) {
-  const prototype = element instanceof HTMLSelectElement
-    ? window.HTMLSelectElement.prototype
-    : window.HTMLInputElement.prototype
-  const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
+function setInputValue(element: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
   if (!setter) {
-    throw new Error('Unable to set form value')
+    throw new Error('Unable to set input value')
   }
   setter.call(element, value)
+  element.dispatchEvent(new Event('input', { bubbles: true }))
   element.dispatchEvent(new Event('change', { bubbles: true }))
 }
 
@@ -48,87 +54,26 @@ describe('AttendanceManagement', () => {
     document.body.innerHTML = ''
   })
 
-  it('defaults to current month and all services with privacy-safe rows and rates', async () => {
+  it('renders the member attendance table for the recent four weeks by default', async () => {
     rendered = await renderView()
     const { container } = rendered
-    const expectedRows = selectAttendanceRows(ADMIN_DEMO_FIXTURES, {
-      period: 'current-month',
-      servicePart: 'all',
-    })
-    const expectedSessions = selectSessionTotals(ADMIN_DEMO_FIXTURES, {
-      period: 'current-month',
-      servicePart: 'all',
-    })
+    const expectedRows = selectAttendanceRows(ADMIN_DEMO_FIXTURES, { period: 'last-4-weeks', servicePart: 'all' })
+    const expectedSessions = selectSessionTotals(ADMIN_DEMO_FIXTURES, { period: 'last-4-weeks', servicePart: 'all' })
 
     expect(container.querySelector('[data-testid="attendance-management"]')).toBeTruthy()
-    expect(container.querySelector<HTMLSelectElement>('#attendance-period')?.value).toBe('current-month')
-    expect(container.querySelector<HTMLSelectElement>('#attendance-service-part')?.value).toBe('all')
-    expect(container.querySelector('label[for="attendance-period"]')?.textContent).toBe('조회 기간')
-    expect(container.querySelector('label[for="attendance-service-part"]')?.textContent).toBe('예배 구분')
-    expect(container.querySelector<HTMLSelectElement>('#attendance-period')?.getAttribute('aria-describedby')).toBe('attendance-filter-range')
-    const range = selectPeriodDateRange(ADMIN_DEMO_FIXTURES, 'current-month')
-    expect(container.querySelector('#attendance-filter-range')?.textContent)
-      .toContain(`${range.from.replace(/-/g, '.')} - ${range.to.replace(/-/g, '.')}`)
+    expect(container.querySelector('h2')?.textContent).toBe('교인별 출석 현황')
     expect(container.querySelectorAll('.attendance-table tbody tr')).toHaveLength(Math.min(expectedRows.length, 100))
-    expect(container.querySelectorAll('.attendance-table thead th')).toHaveLength(expectedSessions.length + 2)
-    expect(container.querySelector('.attendance-table')?.textContent).toContain('2026.08.03')
-    expect(container.querySelector('.attendance-table')?.textContent).toContain('2026.08.10')
-    expect(container.textContent).toContain('김현우 A')
-    expect(container.textContent).toContain('김현우 B')
-    expect(container.textContent).not.toContain('admin-demo-member-')
+    const expectedDates = new Set(expectedSessions.map((total) => total.session.date))
+    expect(container.querySelectorAll('.attendance-table thead th')).toHaveLength(expectedDates.size + 2)
+    expect(container.querySelector('.attendance-table')?.textContent).toContain('2026.07.26')
+    expect(container.querySelector('.attendance-table')?.textContent).toContain('2026.08.16')
     expect(container.querySelectorAll('.attendance-status').length).toBeGreaterThan(0)
-    expect(container.querySelector('.attendance-rate-cell')?.textContent).toMatch(/%$/)
-    const newMemberRow = Array.from(container.querySelectorAll<HTMLTableRowElement>('tbody tr'))
-      .find((row) => row.textContent?.includes('Synthetic new member'))
-    expect(newMemberRow?.querySelector('.attendance-status.is-unrecorded')?.getAttribute('aria-label')).toBe('기록 없음')
+    expect(container.querySelector('.attendance-table')?.textContent).toContain('1부')
+    expect(container.querySelector('.attendance-table')?.textContent).not.toContain('세션별 출석')
+    expect(container.querySelector('.attendance-table')?.textContent).not.toContain('주차별 출석')
   })
 
-  it('updates rows, date columns, rates, and session totals for service and period filters', async () => {
-    rendered = await renderView()
-    const { container } = rendered
-    const serviceSelect = container.querySelector<HTMLSelectElement>('#attendance-service-part')
-    const periodSelect = container.querySelector<HTMLSelectElement>('#attendance-period')
-    if (!serviceSelect || !periodSelect) {
-      throw new Error('Unable to find attendance filters')
-    }
-
-    await act(async () => setInputValue(serviceSelect, '2'))
-    const serviceRows = selectAttendanceRows(ADMIN_DEMO_FIXTURES, { period: 'current-month', servicePart: 2 })
-    const serviceSessions = selectSessionTotals(ADMIN_DEMO_FIXTURES, { period: 'current-month', servicePart: 2 })
-    expect(container.querySelectorAll('.attendance-table tbody tr')).toHaveLength(Math.min(serviceRows.length, 100))
-    expect(container.querySelectorAll('.attendance-table thead th')).toHaveLength(serviceSessions.length + 2)
-    expect(container.querySelector('.attendance-table')?.textContent).not.toContain('1부')
-    expect(container.querySelector('.attendance-table')?.textContent).toContain('2부')
-
-    await act(async () => setInputValue(periodSelect, 'all'))
-    const allSessions = selectSessionTotals(ADMIN_DEMO_FIXTURES, { period: 'all', servicePart: 2 })
-    expect(container.querySelectorAll('.attendance-session-list li')).toHaveLength(allSessions.length)
-    expect(container.querySelector('.attendance-table')?.textContent).toContain('2026.07.20')
-    expect(container.querySelector('.attendance-table')?.textContent).toContain('출석률')
-  }, 15000)
-
-  it('selects session detail and a member history panel independently', async () => {
-    rendered = await renderView()
-    const { container } = rendered
-    const sessionButtons = container.querySelectorAll<HTMLButtonElement>('.attendance-session-list button')
-    const memberButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.attendance-member-button'))
-      .find((button) => button.textContent?.includes('김현우 A'))
-    if (!sessionButtons[1] || !memberButton) {
-      throw new Error('Unable to find session or member controls')
-    }
-
-    await act(async () => sessionButtons[1]?.click())
-    expect(container.querySelector('#session-detail-title')?.textContent).toContain('부 세션 상세')
-    expect(container.querySelector('.attendance-detail-list')?.textContent).toContain('참석 인원')
-
-    await act(async () => memberButton.click())
-    expect(container.querySelector('#member-history-title')?.textContent).toContain('김현우 A')
-    expect(container.querySelector('.attendance-history-list li')).toBeTruthy()
-    expect(container.querySelector('.attendance-history-summary')?.textContent).toContain('참석')
-    expect(container.textContent).not.toContain('admin-demo-member-0001')
-  })
-
-  it('shows a clear no-result state and recovers when the query is cleared', async () => {
+  it('filters members by name', async () => {
     rendered = await renderView()
     const { container } = rendered
     const search = container.querySelector<HTMLInputElement>('#attendance-member-search')
@@ -136,32 +81,175 @@ describe('AttendanceManagement', () => {
       throw new Error('Unable to find member search')
     }
 
-    await act(async () => setInputValue(search, 'no matching synthetic member'))
-    expect(container.querySelector('.attendance-table tbody')).toBeNull()
-    expect(container.querySelector('[role="status"]')?.textContent).toContain('조건에 맞는 출석 기록이 없습니다')
+    await act(async () => setInputValue(search, '김민준'))
 
-    await act(async () => setInputValue(search, ''))
-    expect(container.querySelector('.attendance-table tbody tr')).toBeTruthy()
+    expect(container.querySelectorAll('.attendance-table tbody tr')).toHaveLength(1)
+    expect(container.querySelector('.attendance-table')?.textContent).toContain('김민준')
   })
 
-  it('shows empty states when the fixture has no attendance data', async () => {
-    rendered = await renderView({
-      ...ADMIN_DEMO_FIXTURES,
-      dateRange: { from: ADMIN_DEMO_FIXTURES.referenceDate, to: ADMIN_DEMO_FIXTURES.referenceDate },
-      members: [],
-      sessions: [],
-      events: [],
-    })
+  it('opens a member detail modal with attendance and profile information', async () => {
+    rendered = await renderView()
     const { container } = rendered
+    const memberButton = container.querySelector<HTMLButtonElement>('.attendance-member-button')
+    if (!memberButton) {
+      throw new Error('Unable to find member detail button')
+    }
 
-    expect(container.querySelector('.attendance-table tbody')).toBeNull()
-    expect(container.querySelector('.attendance-table-panel [role="status"]')?.textContent)
-      .toContain('조건에 맞는 출석 기록이 없습니다')
-    expect(container.querySelector('.attendance-session-list [role="status"]')?.textContent)
-      .toBe('선택한 기간에 세션이 없습니다.')
-    expect(container.querySelector('.attendance-session-detail [role="status"]')?.textContent)
-      .toBe('선택한 기간에 예배 세션이 없습니다.')
-    expect(container.querySelector('.attendance-history-panel [role="status"]')?.textContent)
-      .toBe('회원 행을 선택하면 출석 이력을 확인할 수 있습니다.')
+    await act(async () => memberButton.click())
+
+    expect(container.querySelector('[role="dialog"]')).toBeTruthy()
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('교인 상세')
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('등록 시점')
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('주로 참석하는 예배')
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('출석 추이')
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('전체 기간')
+    expect(container.querySelectorAll('.attendance-detail-date')).toHaveLength(26)
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="상세 정보 닫기"]')?.click()
+    })
+    expect(container.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it.each([
+    ['last-4-weeks', 4, '2026.07.26', '2026.07.19'],
+    ['last-3-months', 11, '2026.06.07', '2026.05.31'],
+    ['all', 26, '2026.02.22', undefined],
+  ] as const)('applies the %s period to the attendance table', async (period, dateCount, includedDate, excludedDate) => {
+    rendered = await renderView()
+    const { container } = rendered
+    const periodButton = container.querySelector<HTMLButtonElement>(`[data-period="${period}"]`)
+    if (!periodButton) {
+      throw new Error('Unable to find attendance period button')
+    }
+
+    await act(async () => periodButton.click())
+
+    expect(container.querySelectorAll('.attendance-table thead th')).toHaveLength(dateCount + 2)
+    expect(container.querySelector('.attendance-table')?.textContent).toContain(includedDate)
+    if (excludedDate) {
+      expect(container.querySelector('.attendance-table')?.textContent).not.toContain(excludedDate)
+    }
+  })
+
+  it('shows a simple no-result message', async () => {
+    rendered = await renderView()
+    const { container } = rendered
+    const search = container.querySelector<HTMLInputElement>('#attendance-member-search')
+    if (!search) {
+      throw new Error('Unable to find member search')
+    }
+
+    await act(async () => setInputValue(search, '없는 회원'))
+
+    expect(container.querySelector('.attendance-table')).toBeNull()
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('검색 결과가 없습니다.')
+  })
+
+  it('shows an explicit retry message when live attendance cannot be loaded', async () => {
+    const repository = {
+      getCurrentServiceAttendance: vi.fn().mockRejectedValue(new Error('offline')),
+    } as unknown as AttendanceRepository
+
+    rendered = await renderView(ADMIN_DEMO_FIXTURES, repository)
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(rendered.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('실시간 출석 정보를 불러오지 못했습니다. 화면을 새로고침해 주세요.')
+  })
+
+  it('reloads all bounded current-service rows only when the administrator requests it', async () => {
+    const getCurrentServiceAttendance = vi.fn().mockResolvedValue({
+      serviceKey: '2026-08-16',
+      totalCount: 0,
+      rows: [],
+    })
+    const repository = { getCurrentServiceAttendance } as unknown as AttendanceRepository
+
+    rendered = await renderView(ADMIN_DEMO_FIXTURES, repository)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const refreshButton = rendered.container.querySelector<HTMLButtonElement>('.attendance-refresh-button')
+    if (!refreshButton) throw new Error('Unable to find attendance refresh button')
+
+    await act(async () => {
+      refreshButton.click()
+      await Promise.resolve()
+    })
+
+    expect(getCurrentServiceAttendance).toHaveBeenCalledTimes(2)
+    expect(getCurrentServiceAttendance).toHaveBeenLastCalledWith(2_000)
+  })
+
+  it('loads the service date selected in QR management instead of the separate current config', async () => {
+    const getServiceAttendance = vi.fn().mockResolvedValue({
+      serviceKey: '2026-08-23',
+      totalCount: 0,
+      rows: [],
+    })
+    const getCurrentServiceAttendance = vi.fn()
+    const repository = {
+      getCurrentServiceAttendance,
+      getServiceAttendance,
+    } as unknown as AttendanceRepository
+
+    rendered = await renderView(ADMIN_DEMO_FIXTURES, repository, '2026-08-23')
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(getServiceAttendance).toHaveBeenCalledWith('2026-08-23', 2_000)
+    expect(getCurrentServiceAttendance).not.toHaveBeenCalled()
+    expect(rendered.container.textContent).toContain('2026.08.23')
+  })
+
+  it('merges a QR attendance record into the same member ID and keeps the first service part', () => {
+    const input = mergeCurrentServiceAttendance(ADMIN_DEMO_FIXTURES, {
+      serviceKey: '2026-08-16',
+      totalCount: 2,
+      rows: [
+        {
+          id: 'later',
+          memberId: 'm-001',
+          displayNameSnapshot: '김현우',
+          serviceKey: '2026-08-16',
+          servicePart: 3,
+          submittedAt: new Date('2026-08-16T03:00:00.000Z'),
+        },
+        {
+          id: 'first',
+          memberId: 'm-001',
+          displayNameSnapshot: '김현우',
+          serviceKey: '2026-08-16',
+          servicePart: 2,
+          submittedAt: new Date('2026-08-16T01:00:00.000Z'),
+        },
+      ],
+    })
+    const row = selectAttendanceRows(input, {
+      dateRange: { from: '2026-08-16', to: '2026-08-16' },
+      servicePart: 'all',
+    }).find((candidate) => candidate.member.id === 'm-001')
+
+    expect(row?.member.label).toBe('김현우')
+    expect(row?.events).toEqual([
+      expect.objectContaining({ memberId: 'm-001', part: 2, status: 'attended' }),
+    ])
+  })
+
+  it('adds the current Firebase Sunday when it is newer than the fixed demo history', () => {
+    const input = mergeCurrentServiceAttendance(ADMIN_DEMO_FIXTURES, {
+      serviceKey: '2026-08-23',
+      totalCount: 0,
+      rows: [],
+    })
+    const rows = selectAttendanceRows(input, { period: 'last-4-weeks', servicePart: 'all' })
+
+    expect(input.referenceDate).toBe('2026-08-23')
+    expect(input.sessions.filter((session) => session.date === '2026-08-23')).toHaveLength(3)
+    expect(rows[0]?.events).toContainEqual(expect.objectContaining({ date: '2026-08-23', status: 'missed' }))
   })
 })

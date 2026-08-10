@@ -1,15 +1,12 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 
-import { ADMIN_DEMO_REFERENCE_DATE } from './demoData'
-import {
-  createDemoSession,
-  createDemoSessionUrl,
-  deactivateDemoSession,
-  listDemoSessions,
-  type AdminDemoSession,
-} from './demoSessionStore'
 import type { AdminDemoDate, AdminDemoServicePart } from './types'
+import {
+  getAttendanceTargetUrlForCurrentBrowser,
+  withAttendanceSession,
+} from '../lib/attendanceUrl'
+import { toSeoulServiceKey } from '../lib/seoulDate'
 
 const SERVICE_PARTS: ReadonlyArray<AdminDemoServicePart> = [1, 2, 3]
 
@@ -17,193 +14,257 @@ function formatDate(value: AdminDemoDate): string {
   return value.replace(/-/g, '.')
 }
 
-function formatStatus(status: AdminDemoSession['status']): string {
-  return status === 'active' ? '활성' : '비활성'
+function parseDate(value: AdminDemoDate): Date {
+  return new Date(`${value}T00:00:00.000Z`)
 }
 
-function toServicePart(value: string): AdminDemoServicePart | undefined {
-  if (value === '1' || value === '2' || value === '3') {
-    return Number(value) as AdminDemoServicePart
+function formatAdminDate(value: Date): AdminDemoDate {
+  return value.toISOString().slice(0, 10)
+}
+
+function nextSundayOnOrAfter(value: AdminDemoDate): AdminDemoDate {
+  const date = parseDate(value)
+  date.setUTCDate(date.getUTCDate() + (7 - date.getUTCDay()) % 7)
+  return formatAdminDate(date)
+}
+
+function addDays(value: AdminDemoDate, days: number): AdminDemoDate {
+  const date = parseDate(value)
+  date.setUTCDate(date.getUTCDate() + days)
+  return formatAdminDate(date)
+}
+
+function weekOfMonth(value: AdminDemoDate): number {
+  return Math.floor((parseDate(value).getUTCDate() - 1) / 7) + 1
+}
+
+interface QRDateOption {
+  value: AdminDemoDate
+  month: number
+  weekNumber: number
+  shortDate: string
+  compactDate: string
+  accessibleLabel: string
+  weekday: string
+  isPast: boolean
+}
+
+const QR_YEAR_OPTIONS = [2026, 2027] as const
+const MONTH_OPTIONS = Array.from({ length: 12 }, (_, index) => index + 1)
+
+function sundayOptionsForYear(year: number, currentDate: AdminDemoDate): ReadonlyArray<QRDateOption> {
+  const firstDay = `${year}-01-01`
+  const firstSunday = addDays(firstDay, (7 - parseDate(firstDay).getUTCDay()) % 7)
+  const options: QRDateOption[] = []
+
+  for (let date = firstSunday; parseDate(date).getUTCFullYear() === year; date = addDays(date, 7)) {
+    const parsed = parseDate(date)
+    options.push({
+    value: date,
+      month: parsed.getUTCMonth() + 1,
+      weekNumber: weekOfMonth(date),
+      shortDate: formatDate(date),
+      compactDate: `${String(parsed.getUTCMonth() + 1).padStart(2, '0')}.${String(parsed.getUTCDate()).padStart(2, '0')}`,
+      accessibleLabel: `${parsed.getUTCMonth() + 1}월 ${weekOfMonth(date)}주차 예배 (${formatDate(date)})`,
+      weekday: '일요일',
+      isPast: date < currentDate,
+    })
   }
 
-  return undefined
+  return options
 }
 
-function sessionTag(
-  part: AdminDemoServicePart,
-  date: AdminDemoDate,
-  startsAt: string,
-  sequence: number,
-): string {
-  return `demo-service-${part}-${date}-${startsAt.replace(':', '')}-${String(sequence).padStart(2, '0')}`
+export interface QRGenerationProps {
+  currentDate?: AdminDemoDate
+  selectedDate?: AdminDemoDate
+  onDateChange?: (date: AdminDemoDate | null) => void
 }
 
-function SessionRow({ session, onDeactivate }: {
-  session: AdminDemoSession
-  onDeactivate: (sessionId: string) => void
-}) {
-  return (
-    <li className="qr-session-row" data-session-id={session.id}>
-      <div className="qr-session-details">
-        <strong>{session.tag}</strong>
-        <span>{session.part}부 · {formatDate(session.date)} · {session.startsAt}</span>
-        <a href={session.url}>참여 링크</a>
-      </div>
-      <div className="qr-session-actions">
-        <span className={`admin-status-pill is-${session.status}`}>{formatStatus(session.status)}</span>
-        {session.status === 'active' && (
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => onDeactivate(session.id)}
-          >
-            비활성화
-          </button>
-        )}
-      </div>
-    </li>
-  )
-}
-
-export default function QRGeneration() {
-  const [part, setPart] = useState(String(2))
-  const [date, setDate] = useState<AdminDemoDate>(ADMIN_DEMO_REFERENCE_DATE)
-  const [startsAt, setStartsAt] = useState('11:00')
-  const [sessions, setSessions] = useState<ReadonlyArray<AdminDemoSession>>(() => listDemoSessions())
-  const [selectedSession, setSelectedSession] = useState<AdminDemoSession | null>(null)
+export default function QRGeneration({
+  currentDate = toSeoulServiceKey(),
+  selectedDate,
+  onDateChange,
+}: QRGenerationProps) {
+  const defaultQrDate = nextSundayOnOrAfter(currentDate)
+  const initialDate = selectedDate ?? defaultQrDate
+  const currentYear = parseDate(currentDate).getUTCFullYear()
+  const currentMonth = parseDate(currentDate).getUTCMonth() + 1
+  const [date, setDate] = useState<AdminDemoDate | null>(initialDate)
+  const [year, setYear] = useState(parseDate(initialDate).getUTCFullYear())
+  const [month, setMonth] = useState(parseDate(initialDate).getUTCMonth() + 1)
   const [error, setError] = useState('')
+  const [copiedSessionId, setCopiedSessionId] = useState<string | null>(null)
+  const dateOptions = sundayOptionsForYear(year, currentDate)
+  const visibleDateOptions = dateOptions.filter((option) => option.month === month)
+  const attendanceTarget = getAttendanceTargetUrlForCurrentBrowser()
 
-  function refreshSessions() {
-    setSessions(listDemoSessions())
+  useEffect(() => {
+    onDateChange?.(date)
+  }, [date, onDateChange])
+
+  function selectCalendarPage(selectedYear: number, selectedMonth: number) {
+    const firstAvailableDate = sundayOptionsForYear(selectedYear, currentDate)
+      .find((option) => option.month === selectedMonth && !option.isPast)?.value ?? null
+
+    setYear(selectedYear)
+    setMonth(selectedMonth)
+    setDate(firstAvailableDate)
+    setError('')
+    setCopiedSessionId(null)
   }
 
-  function handleGenerate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const servicePart = toServicePart(part)
+  function handleDateSelect(selectedDate: AdminDemoDate) {
+    setDate(selectedDate)
+    setError('')
+  }
 
-    if (!servicePart || !date || !startsAt) {
-      setError('예배 부서, 예배일, 시작 시간을 모두 입력해 주세요.')
+  async function copyQRCode(sessionId: string) {
+    const svg = document.querySelector<SVGSVGElement>(`[data-qr-session-id="${sessionId}"]`)
+    if (!svg || !navigator.clipboard || typeof ClipboardItem === 'undefined') {
+      setError('QR 이미지를 복사할 수 없습니다.')
       return
     }
 
-    try {
-      const session = createDemoSession({
-        part: servicePart,
-        date,
-        startsAt,
-        tag: sessionTag(servicePart, date, startsAt, listDemoSessions().length + 1),
-      })
-      setSelectedSession(session)
-      setError('')
-      refreshSessions()
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'QR 세션을 만들 수 없습니다.')
-    }
-  }
+    const svgMarkup = new XMLSerializer().serializeToString(svg)
+    const svgBlob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' })
+    const objectUrl = URL.createObjectURL(svgBlob)
 
-  function handleDeactivate(sessionId: string) {
-    deactivateDemoSession(sessionId)
-    refreshSessions()
-    setSelectedSession((current) => current?.id === sessionId
-      ? listDemoSessions().find((session) => session.id === sessionId) ?? null
-      : current)
+    try {
+      const image = new Image()
+      image.src = objectUrl
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve()
+        image.onerror = () => reject(new Error('QR 이미지 변환 실패'))
+      })
+
+      const canvas = document.createElement('canvas')
+      canvas.width = Number(svg.getAttribute('width')) || 140
+      canvas.height = Number(svg.getAttribute('height')) || 140
+      canvas.getContext('2d')?.drawImage(image, 0, 0, canvas.width, canvas.height)
+      const pngBlob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+      if (!pngBlob) {
+        throw new Error('QR 이미지 변환 실패')
+      }
+
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })])
+      setCopiedSessionId(sessionId)
+      setError('')
+      window.setTimeout(() => setCopiedSessionId((current) => current === sessionId ? null : current), 1600)
+    } catch {
+      setError('QR 이미지를 복사할 수 없습니다.')
+    } finally {
+      URL.revokeObjectURL(objectUrl)
+    }
   }
 
   return (
     <section className="qr-generation" data-testid="qr-generation" aria-labelledby="qr-generation-title">
-      <div className="qr-generation-grid">
-        <section className="admin-dashboard-panel" aria-labelledby="qr-generation-form-title">
-          <div className="admin-panel-heading">
-            <div>
-              <p className="admin-panel-kicker">Demo session</p>
-              <h2 id="qr-generation-form-title">새 QR 만들기</h2>
-            </div>
-            <span className="admin-panel-meta">같은 브라우저에서만 유지</span>
-          </div>
-
-          <form className="qr-generation-form" onSubmit={handleGenerate}>
-            <label className="admin-field-label" htmlFor="demo-service-part">예배 부서</label>
-            <select
-              id="demo-service-part"
-              required
-              value={part}
-              onChange={(event) => setPart(event.currentTarget.value)}
-            >
-              {SERVICE_PARTS.map((servicePart) => (
-                <option key={servicePart} value={servicePart}>{servicePart}부 예배</option>
-              ))}
-            </select>
-
-            <label className="admin-field-label" htmlFor="demo-service-date">예배일</label>
-            <input
-              id="demo-service-date"
-              type="date"
-              required
-              value={date}
-              onChange={(event) => setDate(event.currentTarget.value)}
-            />
-
-            <label className="admin-field-label" htmlFor="demo-service-time">시작 시간</label>
-            <input
-              id="demo-service-time"
-              type="time"
-              required
-              value={startsAt}
-              onChange={(event) => setStartsAt(event.currentTarget.value)}
-            />
-
-            {error && <div className="notice notice-error" role="alert">{error}</div>}
-            <button className="primary-button" type="submit">QR 생성하기</button>
-          </form>
-        </section>
-
-        <section className="admin-dashboard-panel" aria-labelledby="qr-generation-title">
-          <div className="admin-panel-heading">
-            <div>
-              <p className="admin-panel-kicker">QR preview</p>
-              <h2 id="qr-generation-title">생성된 QR 미리보기</h2>
-            </div>
-          </div>
-
-          {selectedSession ? (
-            <div className="qr-generation-preview">
-              <div className="qr-code-frame" aria-label="데모 출석 QR 코드">
-                <QRCodeSVG
-                  data-testid="demo-session-qr-code"
-                  value={createDemoSessionUrl(selectedSession.id)}
-                  size={220}
-                  level="M"
-                  marginSize={4}
-                  title="데모 출석 QR"
-                />
-              </div>
-              <strong>{selectedSession.label}</strong>
-              <a className="qr-target-url" href={selectedSession.url}>{selectedSession.url}</a>
-            </div>
-          ) : (
-            <p className="admin-empty-state" role="status">예배 정보를 입력하면 QR 미리보기가 표시됩니다.</p>
-          )}
-        </section>
-      </div>
-
-      <section className="admin-dashboard-panel" aria-labelledby="qr-session-list-title">
+      <section className="admin-dashboard-panel" aria-labelledby="qr-generation-form-title">
         <div className="admin-panel-heading">
           <div>
-            <p className="admin-panel-kicker">Session history</p>
-            <h2 id="qr-session-list-title">QR 세션 목록</h2>
+            <h2 id="qr-generation-form-title">QR 관리</h2>
           </div>
-          <span className="admin-panel-meta">{sessions.length}개</span>
         </div>
 
-        {sessions.length === 0 ? (
-          <p className="admin-empty-state" role="status">생성된 QR 세션이 없습니다.</p>
-        ) : (
-          <ul className="qr-session-list">
-            {sessions.map((session) => (
-              <SessionRow key={session.id} session={session} onDeactivate={handleDeactivate} />
-            ))}
-          </ul>
-        )}
+        <div className="qr-generation-form">
+          <div className="qr-generation-picker">
+            <div className="qr-year-picker">
+              <span className="admin-field-label">연도</span>
+              <div className="qr-year-options" role="tablist" aria-label="예배 연도 선택">
+                {QR_YEAR_OPTIONS.map((option) => (
+                  <button
+                    className={year === option ? 'is-selected' : undefined}
+                    type="button"
+                    role="tab"
+                    aria-selected={year === option}
+                    key={option}
+                    onClick={() => {
+                      selectCalendarPage(option, option === currentYear ? currentMonth : 1)
+                    }}
+                  >
+                    {option}년
+                  </button>
+                ))}
+              </div>
+            </div>
+            <span className="admin-field-label">예배일</span>
+            <div className="qr-month-options" role="tablist" aria-label="예배 월 선택">
+              {MONTH_OPTIONS.map((option) => (
+                <button
+                  className={month === option ? 'is-selected' : undefined}
+                  type="button"
+                  role="tab"
+                  aria-selected={month === option}
+                  key={option}
+                  onClick={() => selectCalendarPage(year, option)}
+                >
+                  {option}월
+                </button>
+              ))}
+            </div>
+            <div className="qr-selected-month-heading">
+              <h3>{month}월 예배</h3>
+            </div>
+            <div className="qr-week-options" role="listbox" aria-label={`${month}월 예배일 선택`}>
+              {visibleDateOptions.map((option) => (
+                <button
+                  className={`qr-date-option ${date === option.value ? 'is-selected' : ''} ${option.isPast ? 'is-past' : ''}`}
+                  type="button"
+                  role="option"
+                  aria-selected={date === option.value}
+                  aria-label={option.accessibleLabel}
+                  disabled={option.isPast}
+                  key={option.value}
+                  onClick={() => handleDateSelect(option.value)}
+                >
+                  <span>{option.weekNumber}주차</span>
+                  <strong>{option.compactDate}</strong>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {error && <div className="notice notice-error" role="alert">{error}</div>}
+          {!attendanceTarget.ok && (
+            <div className="notice notice-error" role="alert">
+              QR을 만들기 전에 실제 출석 URL을 설정해 주세요. {attendanceTarget.error}
+            </div>
+          )}
+          {attendanceTarget.ok ? (date ? (
+              <section className="qr-selected-sessions" aria-labelledby="qr-selected-date-title">
+                <div className="qr-selected-month-heading">
+                  <h3 id="qr-selected-date-title">{formatDate(date)} QR</h3>
+                </div>
+                <div className="qr-session-part-links">
+                  {SERVICE_PARTS.map((part) => {
+                  const sessionId = `service-${date}-${part}`
+                  const sessionUrl = withAttendanceSession(attendanceTarget.url, date, part)
+
+                  return (
+                    <div className="qr-session-part-card" key={part}>
+                      <strong>{part}부 예배</strong>
+                      <QRCodeSVG
+                        data-attendance-url={sessionUrl}
+                        data-qr-session-id={sessionId}
+                        data-testid="attendance-session-qr-code"
+                        value={sessionUrl}
+                        size={140}
+                        level="M"
+                        marginSize={3}
+                        title={`${part}부 출석 QR`}
+                      />
+                      <button className="qr-copy-button" type="button" onClick={() => void copyQRCode(sessionId)}>
+                        {copiedSessionId === sessionId ? '복사됨' : 'QR 이미지 복사'}
+                      </button>
+                    </div>
+                  )
+                    })}
+                </div>
+              </section>
+            ) : (
+              <p className="qr-empty-month" role="status">선택할 수 있는 예배일이 없습니다.</p>
+            )) : null}
+        </div>
       </section>
     </section>
   )

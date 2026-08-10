@@ -1,3 +1,5 @@
+import type { ServiceKey, ServicePart } from '../domain/types'
+
 export type AttendanceUrlValidationResult =
   | { ok: true; url: string }
   | { ok: false; error: string }
@@ -6,6 +8,17 @@ export const ATTENDANCE_URL_ENV_KEY = 'VITE_ATTENDANCE_URL'
 
 const EXAMPLE_ATTENDANCE_URL = 'http://localhost:5173/attend'
 const ATTENDANCE_ROUTE_PATH = '/attend'
+const SERVICE_DATE_QUERY_KEY = 'serviceDate'
+const SERVICE_PART_QUERY_KEY = 'servicePart'
+const SERVICE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.toLocaleLowerCase('en-US')
+  return normalized === 'localhost'
+    || normalized === '127.0.0.1'
+    || normalized === '[::1]'
+    || normalized === '::1'
+}
 
 function configError(detail: string): string {
   return `${ATTENDANCE_URL_ENV_KEY}: ${detail} 예: ${EXAMPLE_ATTENDANCE_URL}`
@@ -70,4 +83,57 @@ export function validateAttendanceTargetUrl(value: string | undefined): Attendan
 
 export function getConfiguredAttendanceTargetUrl(): AttendanceUrlValidationResult {
   return validateAttendanceTargetUrl(import.meta.env.VITE_ATTENDANCE_URL)
+}
+
+/**
+ * Keep local development QR codes scannable when the app is opened through a
+ * LAN address but the env file still contains the usual localhost example.
+ */
+export function getAttendanceTargetUrlForCurrentBrowser(): AttendanceUrlValidationResult {
+  const configured = getConfiguredAttendanceTargetUrl()
+
+  if (!configured.ok || typeof window === 'undefined') {
+    return configured
+  }
+
+  const configuredUrl = new URL(configured.url)
+  if (!isLoopbackHostname(configuredUrl.hostname) || isLoopbackHostname(window.location.hostname)) {
+    return configured
+  }
+
+  return validateAttendanceTargetUrl(new URL(ATTENDANCE_ROUTE_PATH, window.location.origin).toString())
+}
+
+export function withAttendanceSession(
+  url: string,
+  serviceDate: ServiceKey,
+  servicePart: ServicePart,
+): string {
+  const target = new URL(url)
+  target.searchParams.set(SERVICE_DATE_QUERY_KEY, serviceDate)
+  target.searchParams.set(SERVICE_PART_QUERY_KEY, String(servicePart))
+  return target.toString()
+}
+
+export function parseAttendanceServiceDate(search: string): ServiceKey | undefined {
+  const value = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
+    .get(SERVICE_DATE_QUERY_KEY)
+
+  if (!value || !SERVICE_DATE_PATTERN.test(value)) {
+    return undefined
+  }
+
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+    ? value
+    : undefined
+}
+
+export function parseAttendanceServicePart(search: string): ServicePart | undefined {
+  const value = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
+    .get(SERVICE_PART_QUERY_KEY)
+
+  return value === '1' || value === '2' || value === '3'
+    ? Number(value) as ServicePart
+    : undefined
 }

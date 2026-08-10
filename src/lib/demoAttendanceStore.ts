@@ -3,7 +3,9 @@ import type { ServiceConfig, ServiceKey } from '../domain/types'
 import {
   boundedRepositoryLimit,
   MAX_ADMIN_ROWS,
+  MAX_MEMBER_SEARCH_ROWS,
   MAX_MEMBER_HISTORY_ROWS,
+  normalizeMemberSearchQuery,
   type AttendanceDraft,
   type AttendanceRecord,
   type AttendanceRepository,
@@ -19,26 +21,25 @@ export interface DemoAttendanceRecord extends AttendanceRecord {
 }
 
 export interface DemoAttendanceRepository extends AttendanceRepository {
-  listRegisteredMembers(): Promise<PublicMember[]>
   getCurrentServiceConfig(): Promise<ServiceConfig>
+  getServiceConfig(serviceKey: ServiceKey): Promise<ServiceConfig>
   submitAttendance(draft: DemoAttendanceDraft): Promise<DemoAttendanceRecord>
   listMemberHistory(memberId: string, limit?: number): Promise<DemoAttendanceRecord[]>
 }
 
-const SEARCH_RESULT_LIMIT = 8
 const SERVICE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
 let submissionSequence = 0
 const submissionRecords: DemoAttendanceRecord[] = []
 
 export function normalizeMemberQuery(value: string): string {
-  return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('ko-KR')
+  return normalizeMemberSearchQuery(value)
 }
 
 export function searchRegisteredMembers(
   query: string,
   registeredMembers: readonly PublicMember[] = members,
-  limit = SEARCH_RESULT_LIMIT,
+  limit = MAX_MEMBER_SEARCH_ROWS,
 ): PublicMember[] {
   const normalizedQuery = normalizeMemberQuery(query)
 
@@ -51,7 +52,7 @@ export function searchRegisteredMembers(
       const displayLabel = normalizeMemberQuery(member.displayLabel)
       const searchName = normalizeMemberQuery(member.searchName ?? '')
 
-      return displayLabel.includes(normalizedQuery) || searchName.includes(normalizedQuery)
+      return displayLabel.startsWith(normalizedQuery) || searchName.startsWith(normalizedQuery)
     })
     .slice(0, limit)
 }
@@ -75,12 +76,37 @@ export function createDemoAttendanceRepository(
     return { serviceKey: toSeoulServiceKey() }
   }
 
+  async function getServiceConfig(serviceKey: ServiceKey): Promise<ServiceConfig> {
+    assertServiceKey(serviceKey)
+    return { serviceKey }
+  }
+
+  async function getServiceAttendance(
+    serviceKey: ServiceKey,
+    limit?: number,
+  ): Promise<CurrentServiceAttendance> {
+    assertServiceKey(serviceKey)
+    const serviceRecords = submissionRecords.filter((record) => record.serviceKey === serviceKey)
+    const boundedLimit = boundedRepositoryLimit(limit, MAX_ADMIN_ROWS, 'Admin rows')
+
+    return {
+      serviceKey,
+      totalCount: Math.min(serviceRecords.length, MAX_ADMIN_ROWS),
+      rows: serviceRecords.slice(0, boundedLimit).map(cloneAttendanceRecord),
+    }
+  }
+
   return {
-    async listRegisteredMembers(): Promise<PublicMember[]> {
-      return [...registeredMembers]
+    async searchRegisteredMembers(query, limit): Promise<PublicMember[]> {
+      return searchRegisteredMembers(
+        query,
+        registeredMembers,
+        boundedRepositoryLimit(limit, MAX_MEMBER_SEARCH_ROWS, 'Member search'),
+      )
     },
 
     getCurrentServiceConfig,
+    getServiceConfig,
 
     async submitAttendance(draft: DemoAttendanceDraft): Promise<DemoAttendanceRecord> {
       assertServiceKey(draft.serviceKey)
@@ -94,6 +120,13 @@ export function createDemoAttendanceRepository(
         throw new Error('선택한 교인 정보가 일치하지 않습니다.')
       }
 
+      const existingRecord = submissionRecords.find(
+        (record) => record.memberId === draft.memberId && record.serviceKey === draft.serviceKey,
+      )
+      if (existingRecord) {
+        return { ...existingRecord }
+      }
+
       const countForMemberService = submissionRecords.filter(
         (record) => record.memberId === draft.memberId && record.serviceKey === draft.serviceKey,
       ).length + 1
@@ -103,6 +136,7 @@ export function createDemoAttendanceRepository(
         memberId: draft.memberId,
         displayNameSnapshot: draft.displayNameSnapshot,
         serviceKey: draft.serviceKey,
+        servicePart: draft.servicePart,
         submittedAt: new Date(),
         countForMemberService,
       }
@@ -113,17 +147,10 @@ export function createDemoAttendanceRepository(
 
     async getCurrentServiceAttendance(limit?: number): Promise<CurrentServiceAttendance> {
       const serviceConfig = await getCurrentServiceConfig()
-      const currentServiceRecords = submissionRecords.filter(
-        (record) => record.serviceKey === serviceConfig.serviceKey,
-      )
-      const boundedLimit = boundedRepositoryLimit(limit, MAX_ADMIN_ROWS, 'Admin rows')
-
-      return {
-        serviceKey: serviceConfig.serviceKey,
-        totalCount: Math.min(currentServiceRecords.length, MAX_ADMIN_ROWS),
-        rows: currentServiceRecords.slice(0, boundedLimit).map(cloneAttendanceRecord),
-      }
+      return getServiceAttendance(serviceConfig.serviceKey, limit)
     },
+
+    getServiceAttendance,
 
     async listMemberHistory(memberId: string, limit?: number): Promise<DemoAttendanceRecord[]> {
       const normalizedMemberId = memberId.trim()

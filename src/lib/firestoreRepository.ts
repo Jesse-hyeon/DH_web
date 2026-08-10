@@ -8,8 +8,10 @@ import type {
 import {
   boundedRepositoryLimit,
   MAX_ADMIN_ROWS,
+  MAX_MEMBER_SEARCH_ROWS,
   MAX_MEMBER_HISTORY_ROWS,
-  MAX_REGISTERED_MEMBER_ROWS,
+  MIN_MEMBER_SEARCH_LENGTH,
+  normalizeMemberSearchQuery,
 } from './attendanceRepository'
 
 export type FirestorePath = readonly string[]
@@ -30,22 +32,17 @@ export type FirestoreQueryRef = unknown
 export type FirestoreConstraint = unknown
 export type FirestoreServerTimestamp = unknown
 
-export type FirestoreAddDocResult = {
-  id: string
-  ref?: FirestoreDocumentRef
-}
-
 export type FirestoreLike = {
   collection(path: FirestorePath): FirestoreCollectionRef
   doc(path: FirestorePath): FirestoreDocumentRef
   getDoc(ref: FirestoreDocumentRef): Promise<FirestoreDocumentSnapshot<unknown>>
   getDocs(ref: FirestoreQueryRef | FirestoreCollectionRef): Promise<FirestoreQuerySnapshot<unknown>>
-  addDoc<TData>(
-    ref: FirestoreCollectionRef,
+  setDoc<TData>(
+    ref: FirestoreDocumentRef,
     data: TData,
-  ): Promise<FirestoreAddDocResult>
+  ): Promise<void>
   query(ref: FirestoreCollectionRef, ...constraints: FirestoreConstraint[]): FirestoreQueryRef
-  where(fieldPath: string, opStr: '==' | 'in', value: unknown): FirestoreConstraint
+  where(fieldPath: string, opStr: '==' | 'in' | '>=' | '<=', value: unknown): FirestoreConstraint
   orderBy(fieldPath: string, directionStr?: 'asc' | 'desc'): FirestoreConstraint
   limit(limit: number): FirestoreConstraint
   serverTimestamp(): FirestoreServerTimestamp
@@ -55,6 +52,7 @@ export type FirestoreLike = {
 export type PublicMember = {
   id: string
   displayLabel: string
+  cohort?: string
 }
 
 export type ServiceConfig = {
@@ -71,18 +69,21 @@ export type AttendanceRecord = RepositoryAttendanceRecord
 export const COLLECTIONS = {
   members: 'members',
   serviceConfig: 'serviceConfig',
+  serviceSessions: 'serviceSessions',
   attendanceServices: 'attendanceServices',
   attendanceSubmissions: 'submissions',
 } as const
 
 export const CURRENT_SERVICE_KEY_DOCUMENT = 'currentServiceKey'
 
-const PUBLIC_MEMBER_FIELDS = ['memberId', 'displayLabel', 'searchName', 'sortKey'] as const
+const PUBLIC_MEMBER_REQUIRED_FIELDS = ['memberId', 'displayLabel', 'searchName', 'sortKey'] as const
+const PUBLIC_MEMBER_ALLOWED_FIELDS = [...PUBLIC_MEMBER_REQUIRED_FIELDS, 'cohort'] as const
 
 export const ATTENDANCE_SUBMISSION_REQUIRED_FIELDS = [
   'memberId',
   'displayNameSnapshot',
   'serviceKey',
+  'servicePart',
   'submittedAt',
 ] as const
 
@@ -103,8 +104,8 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
 
-function hasExactFields(keys: readonly string[], fields: readonly string[]): boolean {
-  return keys.length === fields.length && fields.every((field) => keys.includes(field))
+function isServicePart(value: unknown): value is 1 | 2 | 3 {
+  return value === 1 || value === 2 || value === 3
 }
 
 export function isAllowedAttendanceSubmissionField(field: string): boolean {
@@ -128,11 +129,13 @@ function parseRegisteredMember(id: unknown, value: unknown): (PublicMember & { m
 
   const keys = Object.keys(value)
   if (!isNonEmptyString(id)
-    || !hasExactFields(keys, PUBLIC_MEMBER_FIELDS)
+    || !PUBLIC_MEMBER_REQUIRED_FIELDS.every((field) => keys.includes(field))
+    || !keys.every((field) => (PUBLIC_MEMBER_ALLOWED_FIELDS as readonly string[]).includes(field))
     || value.memberId !== id
     || !isNonEmptyString(value.displayLabel)
     || !isNonEmptyString(value.searchName)
-    || !isNonEmptyString(value.sortKey)) {
+    || !isNonEmptyString(value.sortKey)
+    || (value.cohort !== undefined && !isNonEmptyString(value.cohort))) {
     return null
   }
 
@@ -142,12 +145,17 @@ function parseRegisteredMember(id: unknown, value: unknown): (PublicMember & { m
     displayLabel: value.displayLabel,
     searchName: value.searchName,
     sortKey: value.sortKey,
+    ...(isNonEmptyString(value.cohort) ? { cohort: value.cohort } : {}),
   }
 }
 
 export function parsePublicMember(id: string, value: unknown): PublicMember | null {
   const member = parseRegisteredMember(id, value)
-  return member ? { id: member.id, displayLabel: member.displayLabel } : null
+  return member ? {
+    id: member.id,
+    displayLabel: member.displayLabel,
+    ...(member.cohort ? { cohort: member.cohort } : {}),
+  } : null
 }
 
 export function parseServiceConfig(value: unknown): ServiceConfig | null {
@@ -186,7 +194,11 @@ export function validateAttendanceSubmissionDraft(
   }
 
   if (draft.serviceKey !== config.serviceKey) {
-    throw new Error('Attendance submission serviceKey must match the current service config.')
+    throw new Error('Attendance submission serviceKey must match the selected service session.')
+  }
+
+  if (!isServicePart(draft.servicePart)) {
+    throw new Error('Attendance submission servicePart must be 1, 2, or 3.')
   }
 
   if (draft.createdAtClient !== undefined && !(draft.createdAtClient instanceof Date)) {
@@ -197,6 +209,7 @@ export function validateAttendanceSubmissionDraft(
     memberId: draft.memberId,
     displayNameSnapshot: draft.displayNameSnapshot,
     serviceKey: draft.serviceKey,
+    servicePart: draft.servicePart,
     ...(draft.createdAtClient ? { createdAtClient: draft.createdAtClient } : {}),
   }
 }
@@ -209,6 +222,7 @@ export function toAttendanceSubmissionCreate(
     memberId: draft.memberId,
     displayNameSnapshot: draft.displayNameSnapshot,
     serviceKey: draft.serviceKey,
+    servicePart: draft.servicePart,
     submittedAt,
     ...(draft.createdAtClient ? { createdAtClient: draft.createdAtClient } : {}),
   }
@@ -247,7 +261,8 @@ export function createFirestoreRepository(firestore: FirestoreLike): AttendanceR
     const value = doc.data()
     const id = doc.id
     if (!isNonEmptyString(id) || !isRecord(value) || !isNonEmptyString(value.memberId)
-      || !isNonEmptyString(value.displayNameSnapshot) || !isNonEmptyString(value.serviceKey)) {
+      || !isNonEmptyString(value.displayNameSnapshot) || !isNonEmptyString(value.serviceKey)
+      || !isServicePart(value.servicePart)) {
       return null
     }
 
@@ -262,6 +277,7 @@ export function createFirestoreRepository(firestore: FirestoreLike): AttendanceR
       memberId: value.memberId,
       displayNameSnapshot: value.displayNameSnapshot,
       serviceKey: value.serviceKey,
+      servicePart: value.servicePart,
       submittedAt,
       ...(createdAtClient ? { createdAtClient } : {}),
     }
@@ -289,40 +305,87 @@ export function createFirestoreRepository(firestore: FirestoreLike): AttendanceR
     return config
   }
 
+  const getServiceConfig = async (serviceKey: string): Promise<ServiceConfig> => {
+    const sessionRef = firestore.doc([COLLECTIONS.serviceSessions, serviceKey])
+    const snapshot = await firestore.getDoc(sessionRef)
+    const config = snapshot.exists() ? parseServiceConfig(snapshot.data()) : null
+
+    if (!config || config.serviceKey !== serviceKey) {
+      throw new Error('Selected service session is missing or invalid.')
+    }
+
+    return config
+  }
+
   const currentAttendanceConstraints = (): FirestoreConstraint[] => [
     firestore.orderBy('submittedAt', 'desc'),
   ]
 
-  const listRegisteredMembers = async () => {
+  const getServiceAttendance = async (
+    serviceKey: string,
+    max?: number,
+  ): Promise<CurrentServiceAttendance> => {
+    const config = await getServiceConfig(serviceKey)
+    const boundedLimit = boundedRepositoryLimit(max, MAX_ADMIN_ROWS, 'Admin rows')
+    const constraints = currentAttendanceConstraints()
+    const submissionsRef = firestore.collection(attendanceSubmissionsPath(config.serviceKey))
+    const rowsQuery = firestore.query(submissionsRef, ...constraints, firestore.limit(boundedLimit))
+    const countQuery = firestore.query(submissionsRef, firestore.limit(MAX_ADMIN_ROWS))
+    const [snapshot, totalCount] = await Promise.all([
+      firestore.getDocs(rowsQuery),
+      firestore.getCount(countQuery),
+    ])
+    const rows = snapshot.docs
+      .map(parseAttendance)
+      .filter((record): record is AttendanceRecord => record !== null)
+
+    return {
+      serviceKey: config.serviceKey,
+      totalCount,
+      rows,
+    }
+  }
+
+  const searchRegisteredMembers = async (queryValue: string, limitValue?: number) => {
+    const normalizedQuery = normalizeMemberSearchQuery(queryValue)
+    if (normalizedQuery.length < MIN_MEMBER_SEARCH_LENGTH) {
+      return []
+    }
+
+    const resultLimit = boundedRepositoryLimit(limitValue, MAX_MEMBER_SEARCH_ROWS, 'Member search')
     const membersRef = firestore.collection([COLLECTIONS.members])
     const membersQuery = firestore.query(
       membersRef,
-      firestore.orderBy('displayLabel', 'asc'),
-      firestore.limit(MAX_REGISTERED_MEMBER_ROWS),
+      firestore.where('searchName', '>=', normalizedQuery),
+      firestore.where('searchName', '<=', `${normalizedQuery}\uf8ff`),
+      firestore.orderBy('searchName', 'asc'),
+      firestore.limit(resultLimit),
     )
     const snapshot = await firestore.getDocs(membersQuery)
 
     return snapshot.docs
       .map((doc) => parseRegisteredMember(doc.id, doc.data()))
       .filter((member): member is NonNullable<ReturnType<typeof parseRegisteredMember>> => member !== null)
-      .map(({ memberId, displayLabel, searchName, sortKey }) => ({
+      .map(({ memberId, displayLabel, searchName, sortKey, cohort }) => ({
         memberId,
         displayLabel,
         searchName,
         sortKey,
+        ...(cohort ? { cohort } : {}),
       }))
   }
 
   return {
-    async listRegisteredMembers() {
-      return listRegisteredMembers()
+    async searchRegisteredMembers(query, limit) {
+      return searchRegisteredMembers(query, limit)
     },
 
     getCurrentServiceConfig,
+    getServiceConfig,
 
     async submitAttendance(draft: AttendanceSubmissionDraft): Promise<AttendanceSubmissionResult> {
       const memberRef = firestore.doc([COLLECTIONS.members, draft.memberId])
-      const configRef = firestore.doc([COLLECTIONS.serviceConfig, CURRENT_SERVICE_KEY_DOCUMENT])
+      const configRef = firestore.doc([COLLECTIONS.serviceSessions, draft.serviceKey])
 
       const [memberSnapshot, configSnapshot] = await Promise.all([
         firestore.getDoc(memberRef),
@@ -340,38 +403,44 @@ export function createFirestoreRepository(firestore: FirestoreLike): AttendanceR
       }
 
       if (!config) {
-        throw new Error('Current service config is missing or invalid.')
+        throw new Error('Selected service session is missing or invalid.')
       }
 
       const validatedDraft = validateAttendanceSubmissionDraft(draft, member, config)
-      const submission = toAttendanceSubmissionCreate(validatedDraft, firestore.serverTimestamp())
-      const submissionsRef = firestore.collection(attendanceSubmissionsPath(config.serviceKey))
-      const created = await firestore.addDoc(submissionsRef, submission)
+      const existing = await listAttendance(config.serviceKey, [
+        firestore.where('memberId', '==', validatedDraft.memberId),
+      ], 1)
+      if (existing[0]) {
+        return existing[0]
+      }
 
-      return { id: created.id }
+      const submission = toAttendanceSubmissionCreate(validatedDraft, firestore.serverTimestamp())
+      const submissionRef = firestore.doc([
+        ...attendanceSubmissionsPath(config.serviceKey),
+        validatedDraft.memberId,
+      ])
+
+      try {
+        await firestore.setDoc(submissionRef, submission)
+      } catch (error) {
+        const concurrentlyCreated = await listAttendance(config.serviceKey, [
+          firestore.where('memberId', '==', validatedDraft.memberId),
+        ], 1)
+        if (concurrentlyCreated[0]) {
+          return concurrentlyCreated[0]
+        }
+        throw error
+      }
+
+      return { id: validatedDraft.memberId }
     },
 
     async getCurrentServiceAttendance(max?: number): Promise<CurrentServiceAttendance> {
       const config = await getCurrentServiceConfig()
-      const boundedLimit = boundedRepositoryLimit(max, MAX_ADMIN_ROWS, 'Admin rows')
-      const constraints = currentAttendanceConstraints()
-      const submissionsRef = firestore.collection(attendanceSubmissionsPath(config.serviceKey))
-      const rowsQuery = firestore.query(submissionsRef, ...constraints, firestore.limit(boundedLimit))
-      const countQuery = firestore.query(submissionsRef, firestore.limit(MAX_ADMIN_ROWS))
-      const [snapshot, totalCount] = await Promise.all([
-        firestore.getDocs(rowsQuery),
-        firestore.getCount(countQuery),
-      ])
-      const rows = snapshot.docs
-        .map(parseAttendance)
-        .filter((record): record is AttendanceRecord => record !== null)
-
-      return {
-        serviceKey: config.serviceKey,
-        totalCount,
-        rows,
-      }
+      return getServiceAttendance(config.serviceKey, max)
     },
+
+    getServiceAttendance,
 
     async listMemberHistory(memberId: string, max?: number): Promise<AttendanceRecord[]> {
       if (!isNonEmptyString(memberId)) {

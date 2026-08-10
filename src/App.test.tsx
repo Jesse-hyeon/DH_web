@@ -3,18 +3,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
-import {
-  createDemoSession,
-  deactivateDemoSession,
-  listDemoSubmissions,
-  resetDemoSessionStore,
-} from './admin/demoSessionStore'
 import { generateMembers, type PublicMember } from './data/members'
 import type {
   DemoAttendanceDraft,
   DemoAttendanceRecord,
   DemoAttendanceRepository,
 } from './lib/demoAttendanceStore'
+import { searchRegisteredMembers as searchDemoRegisteredMembers } from './lib/demoAttendanceStore'
 import { MAX_ADMIN_ROWS, type CurrentServiceAttendance } from './lib/attendanceRepository'
 
 const serviceKey = '2026-08-10'
@@ -39,8 +34,8 @@ function createRepository(options: {
   const registeredMembers = options.members ?? generateMembers()
 
   return {
-    async listRegisteredMembers() {
-      return registeredMembers
+    async searchRegisteredMembers(query, limit) {
+      return searchDemoRegisteredMembers(query, registeredMembers, limit)
     },
     async getCurrentServiceConfig() {
       if (options.getCurrentServiceConfig) {
@@ -48,6 +43,9 @@ function createRepository(options: {
       }
 
       return { serviceKey: options.serviceKey ?? serviceKey }
+    },
+    async getServiceConfig(selectedServiceKey) {
+      return { serviceKey: selectedServiceKey }
     },
     async submitAttendance(draft) {
       if (options.submit) {
@@ -76,6 +74,18 @@ function createRepository(options: {
         rows: currentServiceSubmissions.slice(0, limit ?? MAX_ADMIN_ROWS),
       }
     },
+    async getServiceAttendance(selectedServiceKey, limit?: number): Promise<CurrentServiceAttendance> {
+      const submissions = options.submissions ? await options.submissions() : []
+      const selectedSubmissions = submissions.filter(
+        (record) => record.serviceKey === selectedServiceKey,
+      )
+
+      return {
+        serviceKey: selectedServiceKey,
+        totalCount: Math.min(selectedSubmissions.length, MAX_ADMIN_ROWS),
+        rows: selectedSubmissions.slice(0, limit ?? MAX_ADMIN_ROWS),
+      }
+    },
     async listMemberHistory(memberId, limit) {
       if (options.listMemberHistory) {
         return options.listMemberHistory(memberId, limit)
@@ -88,7 +98,10 @@ function createRepository(options: {
   }
 }
 
-async function renderApp(repository: DemoAttendanceRepository, path = '/attend'): Promise<RenderedApp> {
+async function renderApp(
+  repository: DemoAttendanceRepository,
+  path = `/attend?serviceDate=${serviceKey}&servicePart=1`,
+): Promise<RenderedApp> {
   window.history.pushState({}, '', path)
   const container = document.createElement('div')
   document.body.append(container)
@@ -104,6 +117,7 @@ async function renderApp(repository: DemoAttendanceRepository, path = '/attend')
 
 async function flushEffects() {
   await act(async () => {
+    await vi.dynamicImportSettled()
     await Promise.resolve()
     await Promise.resolve()
   })
@@ -122,7 +136,7 @@ function byText(container: HTMLElement, text: string): HTMLElement {
 
 function buttonByText(container: HTMLElement, text: string): HTMLButtonElement {
   const match = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
-    .find((button) => button.textContent === text)
+    .find((button) => button.textContent === text || button.querySelector(':scope > span')?.textContent === text)
 
   if (!match) {
     throw new Error(`Unable to find button: ${text}`)
@@ -148,7 +162,7 @@ function inputByLabel(container: HTMLElement, labelText: string): HTMLInputEleme
   return input
 }
 
-async function typeSearch(container: HTMLElement, value: string) {
+async function changeSearchInput(container: HTMLElement, value: string) {
   const input = inputByLabel(container, '이름 검색')
   const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
 
@@ -160,6 +174,14 @@ async function typeSearch(container: HTMLElement, value: string) {
     valueSetter.call(input, value)
     input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }))
   })
+}
+
+async function typeSearch(container: HTMLElement, value: string) {
+  await changeSearchInput(container, value)
+  await act(async () => {
+    await new Promise((resolve) => window.setTimeout(resolve, 320))
+  })
+  await flushEffects()
 }
 
 async function clickButton(button: HTMLButtonElement) {
@@ -196,16 +218,25 @@ describe('App attendee flow', () => {
   })
 
   it('empty search does not render the full member list', async () => {
-    rendered = await renderApp(createRepository())
+    const repository = createRepository()
+    const searchMembers = vi.spyOn(repository, 'searchRegisteredMembers')
+    rendered = await renderApp(repository)
 
-    expect(byText(rendered.container, '등록된 이름을 검색한 뒤 본인을 선택해 주세요.')).toBeTruthy()
-    expect(rendered.container.textContent).not.toContain('샘플회원 0003')
+    expect(byText(rendered.container, '이름을 두 글자 이상 입력해 주세요.')).toBeTruthy()
+    expect(inputByLabel(rendered.container, '이름 검색').placeholder).toBe('이름을 검색해 주세요.')
+    expect(rendered.container.textContent).not.toContain('김도윤')
     expect(rendered.container.querySelectorAll('.candidate-row')).toHaveLength(0)
+    expect(searchMembers).not.toHaveBeenCalled()
   })
 
   it('renders duplicate names distinctly and submits the selected ID with display snapshot only', async () => {
     const submissions: DemoAttendanceDraft[] = []
+    const duplicateMembers: PublicMember[] = [
+      { memberId: 'm-001', displayLabel: '김현우', searchName: '김현우', sortKey: '김현우 1', cohort: '1교구' },
+      { memberId: 'm-002', displayLabel: '김현우', searchName: '김현우', sortKey: '김현우 2', cohort: '2교구' },
+    ]
     rendered = await renderApp(createRepository({
+      members: duplicateMembers,
       submit: async (draft) => {
         submissions.push(draft)
         return {
@@ -219,13 +250,16 @@ describe('App attendee flow', () => {
 
     await typeSearch(rendered.container, '  김현우  ')
 
-    expect(buttonByText(rendered.container, '김현우 A')).toBeTruthy()
-    expect(buttonByText(rendered.container, '김현우 B')).toBeTruthy()
+    expect(rendered.container.querySelectorAll('.candidate-row')).toHaveLength(2)
+    expect(rendered.container.textContent).toContain('1교구')
+    expect(rendered.container.textContent).toContain('2교구')
     expect(rendered.container.textContent).not.toContain('m-001')
     expect(rendered.container.textContent).not.toContain('m-002')
 
-    await clickButton(buttonByText(rendered.container, '김현우 B'))
-    expect(byText(rendered.container, '김현우 B')).toBeTruthy()
+    const secondCandidate = rendered.container.querySelectorAll<HTMLButtonElement>('.candidate-row')[1]
+    if (!secondCandidate) throw new Error('Unable to find second duplicate member')
+    await clickButton(secondCandidate)
+    expect(byText(rendered.container, '김현우')).toBeTruthy()
     expect(rendered.container.textContent).not.toContain('m-002')
 
     await clickButton(buttonByText(rendered.container, '출석 제출하기'))
@@ -233,8 +267,9 @@ describe('App attendee flow', () => {
     expect(submissions).toEqual([
       {
         memberId: 'm-002',
-        displayNameSnapshot: '김현우 B',
+        displayNameSnapshot: '김현우',
         serviceKey,
+        servicePart: 1,
       },
     ])
     expect(byText(rendered.container, '출석 완료')).toBeTruthy()
@@ -250,6 +285,18 @@ describe('App attendee flow', () => {
     expect(Array.from(rendered.container.querySelectorAll('button')).map((button) => button.textContent))
       .not.toContain('출석 제출하기')
     expect(submit).not.toHaveBeenCalled()
+  })
+
+  it('clears stale candidates immediately when the search text changes', async () => {
+    rendered = await renderApp(createRepository())
+    await typeSearch(rendered.container, '김현우')
+
+    expect(rendered.container.querySelectorAll('.candidate-row')).toHaveLength(1)
+
+    await changeSearchInput(rendered.container, '김지훈')
+
+    expect(rendered.container.querySelectorAll('.candidate-row')).toHaveLength(0)
+    expect(rendered.container.textContent).toContain('검색 중...')
   })
 
   it('blocks offline submission, shows retryable errors, and reaches success', async () => {
@@ -271,7 +318,7 @@ describe('App attendee flow', () => {
     }))
 
     await typeSearch(rendered.container, '김현우')
-    await clickButton(buttonByText(rendered.container, '김현우 A'))
+    await clickButton(buttonByText(rendered.container, '김현우'))
 
     setOnline(false)
     await act(async () => {
@@ -290,13 +337,45 @@ describe('App attendee flow', () => {
     expect(byText(rendered.container, '데모 저장소 오류')).toBeTruthy()
 
     await clickButton(buttonByText(rendered.container, '출석 제출하기'))
-    expect(byText(rendered.container, '김현우 A')).toBeTruthy()
-    expect(byText(rendered.container, `${serviceKey} 예배 출석이 기록되었습니다.`)).toBeTruthy()
+    expect(byText(rendered.container, '김현우')).toBeTruthy()
+    expect(byText(rendered.container, `${serviceKey} · 1부 예배 출석이 기록되었습니다.`)).toBeTruthy()
   })
 
-  it('keeps root and attend routes on the attendee flow while admin and QR use separate pages', async () => {
+  it('shows the service part from the QR and uses a simple confirmation button', async () => {
+    rendered = await renderApp(createRepository(), `/attend?serviceDate=${serviceKey}&servicePart=2`)
+
+    expect(byText(rendered.container, `${serviceKey} · 2부`)).toBeTruthy()
+    await typeSearch(rendered.container, '김현우')
+    await clickButton(buttonByText(rendered.container, '김현우'))
+    await clickButton(buttonByText(rendered.container, '출석 제출하기'))
+
+    expect(byText(rendered.container, `${serviceKey} · 2부 예배 출석이 기록되었습니다.`)).toBeTruthy()
+    expect(buttonByText(rendered.container, '확인')).toBeTruthy()
+    expect(rendered.container.textContent).not.toContain('다른 이름 검색하기')
+  })
+
+  it('confirms the first persisted service part when a later QR is scanned again', async () => {
+    rendered = await renderApp(createRepository({
+      submit: async (draft) => ({
+        ...draft,
+        id: 'existing-attendance',
+        servicePart: 1,
+        submittedAt: new Date('2026-08-10T00:30:00.000Z'),
+        countForMemberService: 1,
+      }),
+    }), `/attend?serviceDate=${serviceKey}&servicePart=3`)
+
+    await typeSearch(rendered.container, '김현우')
+    await clickButton(buttonByText(rendered.container, '김현우'))
+    await clickButton(buttonByText(rendered.container, '출석 제출하기'))
+
+    expect(byText(rendered.container, `${serviceKey} · 1부 예배 출석이 기록되었습니다.`)).toBeTruthy()
+    expect(rendered.container.textContent).not.toContain(`${serviceKey} · 3부 예배 출석이 기록되었습니다.`)
+  })
+
+  it('requires a complete QR session while admin uses a separate page', async () => {
     rendered = await renderApp(createRepository(), '/')
-    expect(byText(rendered.container, '오늘 예배 출석')).toBeTruthy()
+    expect(byText(rendered.container, '사용할 수 없는 경로입니다')).toBeTruthy()
 
     act(() => {
       rendered?.root.unmount()
@@ -304,7 +383,15 @@ describe('App attendee flow', () => {
     rendered.container.remove()
 
     rendered = await renderApp(createRepository(), '/attend')
-    expect(byText(rendered.container, '오늘 예배 출석')).toBeTruthy()
+    expect(byText(rendered.container, '유효한 출석 QR이 필요합니다')).toBeTruthy()
+
+    act(() => {
+      rendered?.root.unmount()
+    })
+    rendered.container.remove()
+
+    rendered = await renderApp(createRepository(), '/attend?serviceDate=invalid&servicePart=4')
+    expect(byText(rendered.container, '유효한 출석 QR이 필요합니다')).toBeTruthy()
 
     act(() => {
       rendered?.root.unmount()
@@ -312,17 +399,8 @@ describe('App attendee flow', () => {
     rendered.container.remove()
 
     rendered = await renderApp(createRepository(), '/admin')
-    expect(byText(rendered.container, 'Dashboard')).toBeTruthy()
+    expect(rendered.container.querySelector('nav a[aria-current="page"]')?.textContent).toBe('대시보드')
 
-    act(() => {
-      rendered?.root.unmount()
-    })
-    rendered.container.remove()
-
-    vi.stubEnv('VITE_ATTENDANCE_URL', 'http://localhost:5173/attend')
-    rendered = await renderApp(createRepository(), '/qr')
-    expect(byText(rendered.container, '출석 체크')).toBeTruthy()
-    expect(rendered.container.querySelector('[data-testid="attendance-qr-code"]')).toBeTruthy()
   })
 })
 
@@ -340,12 +418,12 @@ describe('App admin shell', () => {
     document.body.innerHTML = ''
   })
 
-  it('defaults to Dashboard with three accessible navigation links', async () => {
+  it('defaults to 대시보드 with three accessible navigation links', async () => {
     rendered = await renderApp(createRepository(), '/admin')
 
-    expect(byText(rendered.container, 'Dashboard')).toBeTruthy()
+    expect(rendered.container.querySelector('nav a[aria-current="page"]')?.textContent).toBe('대시보드')
     expect(rendered.container.querySelectorAll('nav a')).toHaveLength(3)
-    expect(rendered.container.querySelector('nav a[aria-current="page"]')?.textContent).toBe('Dashboard')
+    expect(rendered.container.querySelector('nav a[aria-current="page"]')?.textContent).toBe('대시보드')
     expect(rendered.container.textContent).not.toContain('현재 예배 출석 현황')
   })
 
@@ -361,11 +439,11 @@ describe('App admin shell', () => {
       qrLink?.click()
     })
 
-    expect(byText(rendered.container, 'QR Generation')).toBeTruthy()
+    expect(rendered.container.querySelector('nav a[aria-current="page"]')?.textContent).toBe('QR 관리')
     expect(rendered.container.querySelector('nav a[aria-current="page"]')?.textContent)
-      .toBe('QR Generation')
+      .toBe('QR 관리')
     expect(window.location.pathname).toBe('/admin')
-    expect(window.location.search).toBe('?view=qr-generation')
+    expect(window.location.search).toBe('?view=qr-generation&serviceDate=2026-08-16')
 
     const attendanceLink = rendered.container.querySelector<HTMLAnchorElement>(
       'a[href="/admin?view=attendance-management"]',
@@ -374,144 +452,19 @@ describe('App admin shell', () => {
       attendanceLink?.click()
     })
 
-    expect(byText(rendered.container, 'Attendance Management')).toBeTruthy()
+    expect(rendered.container.querySelector('nav a[aria-current="page"]')?.textContent).toBe('출석 관리')
     expect(rendered.container.querySelector('nav a[aria-current="page"]')?.textContent)
-      .toBe('Attendance Management')
+      .toBe('출석 관리')
   })
 
-  it('opens a view from the admin view query without reading the repository', async () => {
+  it('opens the attendance view and loads the bounded current-service rows', async () => {
     const repository = createRepository()
     const getCurrentServiceAttendance = vi.spyOn(repository, 'getCurrentServiceAttendance')
 
     rendered = await renderApp(repository, '/admin?view=attendance-management')
 
-    expect(byText(rendered.container, 'Attendance Management')).toBeTruthy()
-    expect(getCurrentServiceAttendance).not.toHaveBeenCalled()
-  })
-})
-
-describe('App QR monitor', () => {
-  let rendered: RenderedApp | null = null
-
-  afterEach(() => {
-    if (rendered) {
-      act(() => {
-        rendered?.root.unmount()
-      })
-      rendered.container.remove()
-      rendered = null
-    }
-    document.body.innerHTML = ''
-  })
-
-  it('shows a clear missing config error', async () => {
-    vi.stubEnv('VITE_ATTENDANCE_URL', '')
-
-    rendered = await renderApp(createRepository(), '/qr')
-
-    expect(byText(rendered.container, '출석 QR 설정 필요')).toBeTruthy()
-    expect(rendered.container.textContent).toContain('VITE_ATTENDANCE_URL')
-    expect(rendered.container.textContent).toContain('http://localhost:5173/attend')
-    expect(rendered.container.querySelector('[data-testid="attendance-qr-code"]')).toBeNull()
-  })
-
-  it('rejects admin QR targets', async () => {
-    vi.stubEnv('VITE_ATTENDANCE_URL', 'http://localhost:5173/admin')
-
-    rendered = await renderApp(createRepository(), '/qr')
-
-    expect(rendered.container.textContent).toContain('관리자 경로')
-    expect(rendered.container.textContent).not.toContain('http://localhost:5173/admin')
-    expect(rendered.container.querySelector('[data-testid="attendance-qr-code"]')).toBeNull()
-  })
-
-  it('renders a non-empty QR SVG for a valid attend target', async () => {
-    const target = 'http://localhost:5173/attend?source=monitor#front'
-    vi.stubEnv('VITE_ATTENDANCE_URL', target)
-
-    rendered = await renderApp(createRepository(), '/qr')
-
-    const qrCode = rendered.container.querySelector<SVGSVGElement>('[data-testid="attendance-qr-code"]')
-    expect(qrCode).toBeTruthy()
-    expect(qrCode?.querySelector('path')).toBeTruthy()
-    expect(qrCode?.outerHTML.length).toBeGreaterThan(500)
-    expect(rendered.container.textContent).toContain(target)
-    expect(rendered.container.textContent).not.toContain('/admin')
-  })
-})
-
-describe('App demo attendee routing', () => {
-  let rendered: RenderedApp | null = null
-
-  beforeEach(() => {
-    resetDemoSessionStore()
-  })
-
-  afterEach(() => {
-    if (rendered) {
-      act(() => rendered?.root.unmount())
-      rendered.container.remove()
-      rendered = null
-    }
-    document.body.innerHTML = ''
-  })
-
-  it('uses demo-local submission for an explicit active session without the repository', async () => {
-    const session = createDemoSession({ part: 2, date: serviceKey, startsAt: '11:00' })
-    const repository = createRepository()
-    const submit = vi.spyOn(repository, 'submitAttendance')
-    const listMembers = vi.spyOn(repository, 'listRegisteredMembers')
-    const getConfig = vi.spyOn(repository, 'getCurrentServiceConfig')
-
-    rendered = await renderApp(repository, session.url)
-    await typeSearch(rendered.container, '김현우')
-    await clickButton(buttonByText(rendered.container, '김현우 A'))
-    await clickButton(buttonByText(rendered.container, '출석 제출하기'))
-
-    expect(byText(rendered.container, '데모 출석 완료')).toBeTruthy()
-    expect(listDemoSubmissions(session.id)).toHaveLength(1)
-    expect(submit).not.toHaveBeenCalled()
-    expect(listMembers).not.toHaveBeenCalled()
-    expect(getConfig).not.toHaveBeenCalled()
-  })
-
-  it('renders deterministic invalid and closed states without repository access', async () => {
-    const repository = createRepository()
-    const submit = vi.spyOn(repository, 'submitAttendance')
-    const listMembers = vi.spyOn(repository, 'listRegisteredMembers')
-    const getConfig = vi.spyOn(repository, 'getCurrentServiceConfig')
-
-    rendered = await renderApp(repository, '/attend?demoSessionId=missing-demo-session')
-    expect(byText(rendered.container, '유효하지 않은 데모 세션입니다')).toBeTruthy()
-    expect(submit).not.toHaveBeenCalled()
-    expect(listMembers).not.toHaveBeenCalled()
-    expect(getConfig).not.toHaveBeenCalled()
-
-    act(() => {
-      rendered?.root.unmount()
-    })
-    rendered.container.remove()
-    rendered = null
-
-    const session = createDemoSession({ part: 1, date: serviceKey, startsAt: '09:00' })
-    deactivateDemoSession(session.id)
-    rendered = await renderApp(repository, session.url)
-    expect(byText(rendered.container, '종료된 데모 세션입니다')).toBeTruthy()
-    expect(rendered.container.querySelector('[data-testid="demo-session-closed"]')).toBeTruthy()
-    expect(submit).not.toHaveBeenCalled()
-    expect(listMembers).not.toHaveBeenCalled()
-    expect(getConfig).not.toHaveBeenCalled()
-  })
-
-  it('keeps queryless attend repository-backed and does not resolve a demo session', async () => {
-    const repository = createRepository()
-    const getConfig = vi.spyOn(repository, 'getCurrentServiceConfig')
-    const session = createDemoSession({ part: 3, date: serviceKey, startsAt: '14:00' })
-
-    rendered = await renderApp(repository, '/attend')
-
-    expect(byText(rendered.container, '오늘 예배 출석')).toBeTruthy()
-    expect(getConfig).toHaveBeenCalled()
-    expect(listDemoSubmissions(session.id)).toHaveLength(0)
+    expect(rendered.container.querySelector('nav a[aria-current="page"]')?.textContent).toBe('출석 관리')
+    expect(getCurrentServiceAttendance).toHaveBeenCalledOnce()
+    expect(getCurrentServiceAttendance).toHaveBeenCalledWith(2_000)
   })
 })

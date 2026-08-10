@@ -49,20 +49,31 @@ describe('admin demo fixtures', () => {
     expect(new Set(eventIds).size).toBe(eventIds.length)
   })
 
-  it('preserves the two same-label choices as separate identities', () => {
-    const choices = ADMIN_DEMO_FIXTURES.members.filter((member) => member.label.startsWith('김현우'))
+  it('uses realistic names while keeping member identities separate', () => {
+    const choices = ADMIN_DEMO_FIXTURES.members.filter((member) => member.id === 'm-001' || member.id === 'm-002')
 
     expect(choices).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'admin-demo-member-0001', label: '김현우 A' }),
-      expect.objectContaining({ id: 'admin-demo-member-0002', label: '김현우 B' }),
+      expect.objectContaining({ id: 'm-001', label: '김현우' }),
+      expect.objectContaining({ id: 'm-002', label: '김지훈' }),
     ]))
     expect(choices[0]?.id).not.toBe(choices[1]?.id)
   })
 
+  it('distributes the 2,000 members evenly across five 교구', () => {
+    const cohortCounts = new Map<string, number>()
+    for (const member of ADMIN_DEMO_FIXTURES.members) {
+      cohortCounts.set(member.cohort, (cohortCounts.get(member.cohort) ?? 0) + 1)
+    }
+
+    expect([...cohortCounts.keys()].sort()).toEqual(['1교구', '2교구', '3교구', '4교구', '5교구'])
+    expect([...cohortCounts.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, count]) => count))
+      .toEqual([400, 400, 400, 400, 400])
+  })
+
   it('covers all service parts, dates, sessions, and event statuses', () => {
     expect(new Set(ADMIN_DEMO_FIXTURES.sessions.map((session) => session.part))).toEqual(new Set([1, 2, 3]))
-    expect(new Set(ADMIN_DEMO_FIXTURES.sessions.map((session) => session.date)).size).toBe(4)
-    expect(ADMIN_DEMO_FIXTURES.sessions).toHaveLength(12)
+    expect(new Set(ADMIN_DEMO_FIXTURES.sessions.map((session) => session.date)).size).toBe(26)
+    expect(ADMIN_DEMO_FIXTURES.sessions).toHaveLength(78)
     expect(new Set(ADMIN_DEMO_FIXTURES.events.map((event) => event.status))).toEqual(new Set(['attended', 'missed']))
     expect(ADMIN_DEMO_FIXTURES.events.every((event) => event.sessionId.startsWith('admin-demo-session-'))).toBe(true)
   })
@@ -72,7 +83,7 @@ describe('admin demo fixtures', () => {
 
     expect(newMember).toEqual(expect.objectContaining({ joinedOn: '2026-08-05' }))
     expect(ADMIN_DEMO_FIXTURES.dashboard.newMemberCount).toBeGreaterThanOrEqual(1)
-    expect(ADMIN_DEMO_REFERENCE_DATE).toBe('2026-08-10')
+    expect(ADMIN_DEMO_REFERENCE_DATE).toBe('2026-08-16')
   })
 
   it('includes four consecutive missed weeks for the long-term absence fixture', () => {
@@ -80,7 +91,7 @@ describe('admin demo fixtures', () => {
       .filter((event) => event.memberId === ADMIN_DEMO_LONG_ABSENCE_ID && event.status === 'missed')
       .map((event) => event.weekNumber))
 
-    expect(missedWeeks).toEqual(new Set([1, 2, 3, 4]))
+    expect(missedWeeks).toEqual(new Set([23, 24, 25, 26]))
     expect(ADMIN_DEMO_FIXTURES.dashboard.longTermAbsenteeCount).toBeGreaterThanOrEqual(1)
   })
 

@@ -1,24 +1,18 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { QRCodeSVG } from 'qrcode.react'
+import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react'
 
-import AdminShell from './admin/AdminShell'
-import { members, type PublicMember } from './data/members'
+import type { PublicMember } from './data/members'
+import type { ServiceKey, ServicePart } from './domain/types'
 import {
-  parseDemoSessionId,
-  resolveDemoSessionState,
-  submitDemoAttendance,
-  type DemoSessionResolution,
-} from './admin/demoSessionStore'
-import type { AdminDemoSession, DemoSessionAttendance } from './admin/demoSessionStore'
-import type { ServiceKey } from './domain/types'
-import {
+  MAX_MEMBER_SEARCH_ROWS,
+  MIN_MEMBER_SEARCH_LENGTH,
+  normalizeMemberSearchQuery,
   type AttendanceRepository,
   type AttendanceSubmissionResult,
 } from './lib/attendanceRepository'
-import { getConfiguredAttendanceTargetUrl } from './lib/attendanceUrl'
 import {
-  searchRegisteredMembers,
-} from './lib/demoAttendanceStore'
+  parseAttendanceServiceDate,
+  parseAttendanceServicePart,
+} from './lib/attendanceUrl'
 import { createRuntimeAttendanceRepository } from './lib/runtimeRepository'
 
 type AttendeeStep = 'search' | 'confirm' | 'success'
@@ -28,18 +22,27 @@ interface AttendeeAppProps {
 }
 
 interface LoadedContext {
-  members: PublicMember[]
   serviceKey: ServiceKey
 }
+
+const MEMBER_SEARCH_DEBOUNCE_MS = 300
+const AdminShell = lazy(() => import('./admin/AdminShell'))
 
 function getInitialOnlineState(): boolean {
   return typeof navigator === 'undefined' ? true : navigator.onLine
 }
 
-function AttendeeApp({ repository }: AttendeeAppProps & { repository: AttendanceRepository }) {
+function AttendeeApp({ repository, serviceDate, servicePart }: AttendeeAppProps & {
+  repository: AttendanceRepository
+  serviceDate: ServiceKey
+  servicePart: ServicePart
+}) {
   const [context, setContext] = useState<LoadedContext | null>(null)
   const [loadError, setLoadError] = useState('')
   const [query, setQuery] = useState('')
+  const [candidates, setCandidates] = useState<PublicMember[]>([])
+  const [isSearching, setIsSearching] = useState(false)
+  const [searchError, setSearchError] = useState('')
   const [selectedMember, setSelectedMember] = useState<PublicMember | null>(null)
   const [step, setStep] = useState<AttendeeStep>('search')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -54,14 +57,10 @@ function AttendeeApp({ repository }: AttendeeAppProps & { repository: Attendance
       setLoadError('')
 
       try {
-        const [registeredMembers, serviceConfig] = await Promise.all([
-          repository.listRegisteredMembers(),
-          repository.getCurrentServiceConfig(),
-        ])
+        const serviceConfig = await repository.getServiceConfig(serviceDate)
 
         if (isActive) {
           setContext({
-            members: registeredMembers,
             serviceKey: serviceConfig.serviceKey,
           })
         }
@@ -77,7 +76,46 @@ function AttendeeApp({ repository }: AttendeeAppProps & { repository: Attendance
     return () => {
       isActive = false
     }
-  }, [repository])
+  }, [repository, serviceDate])
+
+  useEffect(() => {
+    const normalizedQuery = normalizeMemberSearchQuery(query)
+    if (step !== 'search' || normalizedQuery.length < MIN_MEMBER_SEARCH_LENGTH) {
+      setCandidates([])
+      setIsSearching(false)
+      setSearchError('')
+      return
+    }
+
+    setCandidates([])
+    setIsSearching(true)
+    setSearchError('')
+    let isActive = true
+    const timeoutId = window.setTimeout(() => {
+      void repository.searchRegisteredMembers(normalizedQuery, MAX_MEMBER_SEARCH_ROWS)
+        .then((members) => {
+          if (isActive) {
+            setCandidates(members)
+          }
+        })
+        .catch((error) => {
+          if (isActive) {
+            setCandidates([])
+            setSearchError(error instanceof Error ? error.message : '이름 검색에 실패했습니다.')
+          }
+        })
+        .finally(() => {
+          if (isActive) {
+            setIsSearching(false)
+          }
+        })
+    }, MEMBER_SEARCH_DEBOUNCE_MS)
+
+    return () => {
+      isActive = false
+      window.clearTimeout(timeoutId)
+    }
+  }, [query, repository, step])
 
   useEffect(() => {
     const updateOnlineState = () => setIsOnline(getInitialOnlineState())
@@ -91,16 +129,12 @@ function AttendeeApp({ repository }: AttendeeAppProps & { repository: Attendance
     }
   }, [])
 
-  const candidates = useMemo(
-    () => (context ? searchRegisteredMembers(query, context.members) : []),
-    [context, query],
-  )
-
-  const trimmedQuery = query.trim()
+  const normalizedQuery = normalizeMemberSearchQuery(query)
   const canSubmit = Boolean(selectedMember && context && isOnline && !isSubmitting)
 
   function resetToSearch() {
     setQuery('')
+    setCandidates([])
     setSelectedMember(null)
     setStep('search')
     setSubmitError('')
@@ -137,6 +171,7 @@ function AttendeeApp({ repository }: AttendeeAppProps & { repository: Attendance
         memberId: selectedMember.memberId,
         displayNameSnapshot: selectedMember.displayLabel,
         serviceKey: context.serviceKey,
+        servicePart,
       }
       const record = await repository.submitAttendance(draft)
 
@@ -186,12 +221,9 @@ function AttendeeApp({ repository }: AttendeeAppProps & { repository: Attendance
     <main className="app-shell">
       <section className="attend-panel" aria-labelledby="attend-title">
         <div className="top-row">
-          <div>
-            <p className="eyebrow">교회 출석 데모</p>
-            <h1 id="attend-title">오늘 예배 출석</h1>
-          </div>
-          <span className="service-pill" aria-label={`예배일 ${context.serviceKey}`}>
-            {context.serviceKey}
+          <h1 id="attend-title">대흥교회 출석</h1>
+          <span className="service-pill" aria-label={`예배일 ${context.serviceKey} ${servicePart}부`}>
+            {context.serviceKey} · {servicePart}부
           </span>
         </div>
 
@@ -214,13 +246,17 @@ function AttendeeApp({ repository }: AttendeeAppProps & { repository: Attendance
               type="search"
               value={query}
               onChange={(event) => setQuery(event.currentTarget.value)}
-              placeholder="예: 김현우"
+              placeholder="이름을 검색해 주세요."
             />
 
-            {trimmedQuery.length === 0 ? (
+            {normalizedQuery.length < MIN_MEMBER_SEARCH_LENGTH ? (
               <div className="empty-state" role="status">
-                등록된 이름을 검색한 뒤 본인을 선택해 주세요.
+                이름을 두 글자 이상 입력해 주세요.
               </div>
+            ) : isSearching ? (
+              <div className="empty-state" role="status">검색 중...</div>
+            ) : searchError ? (
+              <div className="notice notice-error" role="alert">{searchError}</div>
             ) : candidates.length === 0 ? (
               <div className="empty-state" role="status">
                 검색 결과가 없습니다. 이름을 다시 확인해 주세요.
@@ -235,6 +271,7 @@ function AttendeeApp({ repository }: AttendeeAppProps & { repository: Attendance
                       onClick={() => selectMember(member)}
                     >
                       <span>{member.displayLabel}</span>
+                      {member.cohort ? <small>{member.cohort}</small> : null}
                     </button>
                   </li>
                 ))}
@@ -279,9 +316,11 @@ function AttendeeApp({ repository }: AttendeeAppProps & { repository: Attendance
             </div>
             <p className="section-label">출석 완료</p>
             <h2>{successRecord.displayNameSnapshot}</h2>
-            <p className="support-copy">{successRecord.serviceKey} 예배 출석이 기록되었습니다.</p>
+            <p className="support-copy">
+              {successRecord.serviceKey} · {successRecord.servicePart}부 예배 출석이 기록되었습니다.
+            </p>
             <button className="primary-button" type="button" onClick={resetToSearch}>
-              다른 이름 검색하기
+              확인
             </button>
           </div>
         )}
@@ -290,212 +329,25 @@ function AttendeeApp({ repository }: AttendeeAppProps & { repository: Attendance
   )
 }
 
-function DemoSessionState({ status }: { status: 'invalid' | 'inactive' }) {
-  const isInactive = status === 'inactive'
-
-  return (
-    <main className="app-shell">
-      <section
-        className="attend-panel"
-        data-testid={isInactive ? 'demo-session-closed' : 'demo-session-invalid'}
-        aria-labelledby="demo-session-state-title"
-      >
-        <p className="eyebrow">QR 데모</p>
-        <h1 id="demo-session-state-title">
-          {isInactive ? '종료된 데모 세션입니다' : '유효하지 않은 데모 세션입니다'}
-        </h1>
-        <div className={`notice ${isInactive ? 'notice-warning' : 'notice-error'}`} role="status">
-          {isInactive
-            ? '이 세션은 더 이상 출석을 받을 수 없습니다.'
-            : '이 QR 세션을 찾을 수 없습니다. 관리자 화면에서 새 QR을 생성해 주세요.'}
-        </div>
-      </section>
-    </main>
-  )
-}
-
-function DemoAttendeeApp({ session }: { session: AdminDemoSession }) {
-  const [query, setQuery] = useState('')
-  const [selectedMember, setSelectedMember] = useState<PublicMember | null>(null)
-  const [step, setStep] = useState<AttendeeStep>('search')
-  const [submitError, setSubmitError] = useState('')
-  const [successRecord, setSuccessRecord] = useState<DemoSessionAttendance | null>(null)
-
-  const candidates = useMemo(() => searchRegisteredMembers(query, members), [query])
-  const trimmedQuery = query.trim()
-  const submittedMember = successRecord
-    ? members.find((member) => member.memberId === successRecord.memberId)
-    : undefined
-
-  function selectMember(member: PublicMember) {
-    setSelectedMember(member)
-    setStep('confirm')
-    setSubmitError('')
-  }
-
-  function changeSelection() {
-    setSelectedMember(null)
-    setStep('search')
-    setSubmitError('')
-  }
-
-  async function submitSelectedMember() {
-    if (!selectedMember) {
-      return
-    }
-
-    setSubmitError('')
-    const result = submitDemoAttendance({ sessionId: session.id, memberId: selectedMember.memberId })
-
-    if (!result.accepted) {
-      setSubmitError(result.reason === 'inactive-session'
-        ? '이 데모 세션은 종료되어 출석을 받을 수 없습니다.'
-        : '데모 세션을 확인한 뒤 다시 시도해 주세요.')
-      return
-    }
-
-    setSuccessRecord(result.submission)
-    setStep('success')
-  }
-
-  function resetToSearch() {
-    setQuery('')
-    setSelectedMember(null)
-    setSubmitError('')
-    setSuccessRecord(null)
-    setStep('search')
-  }
-
-  return (
-    <main className="app-shell">
-      <section className="attend-panel" aria-labelledby="demo-attend-title">
-        <div className="top-row">
-          <div>
-            <p className="eyebrow">교회 출석 데모</p>
-            <h1 id="demo-attend-title">데모 출석 체크</h1>
-          </div>
-          <span className="service-pill" aria-label={`데모 세션 ${session.tag}`}>
-            {session.part}부 · {session.date}
-          </span>
-        </div>
-        <p className="support-copy">{session.label}</p>
-
-        {step === 'search' && (
-          <form className="search-section" onSubmit={(event) => event.preventDefault()}>
-            <label className="field-label" htmlFor="demo-member-search">이름 검색</label>
-            <input
-              id="demo-member-search"
-              className="search-input"
-              autoComplete="off"
-              inputMode="search"
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.currentTarget.value)}
-              placeholder="예: 김현우"
-            />
-
-            {trimmedQuery.length === 0 ? (
-              <div className="empty-state" role="status">등록된 이름을 검색한 뒤 본인을 선택해 주세요.</div>
-            ) : candidates.length === 0 ? (
-              <div className="empty-state" role="status">검색 결과가 없습니다. 이름을 다시 확인해 주세요.</div>
-            ) : (
-              <ul className="candidate-list" aria-label="검색 결과">
-                {candidates.map((member) => (
-                  <li key={member.memberId}>
-                    <button className="candidate-row" type="button" onClick={() => selectMember(member)}>
-                      <span>{member.displayLabel}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </form>
-        )}
-
-        {step === 'confirm' && selectedMember && (
-          <div className="confirm-section">
-            <p className="section-label">선택한 이름</p>
-            <div className="selected-card"><strong>{selectedMember.displayLabel}</strong></div>
-            {submitError && <div className="notice notice-error" role="alert">{submitError}</div>}
-            <div className="button-stack">
-              <button className="primary-button" type="button" onClick={submitSelectedMember}>출석 제출하기</button>
-              <button className="secondary-button" type="button" onClick={changeSelection}>다시 검색하기</button>
-            </div>
-          </div>
-        )}
-
-        {step === 'success' && successRecord && (
-          <div className="success-section">
-            <div className="success-mark" aria-hidden="true">✓</div>
-            <p className="section-label">데모 출석 완료</p>
-            <h2>{submittedMember?.displayLabel ?? '출석자'}</h2>
-            <p className="support-copy">{session.label} 출석이 데모 세션에 기록되었습니다.</p>
-            <button className="primary-button" type="button" onClick={resetToSearch}>다른 이름 검색하기</button>
-          </div>
-        )}
-      </section>
-    </main>
-  )
-}
-
-function DemoAttendeeRoute({ resolution }: { resolution: DemoSessionResolution }) {
-  if (resolution.status !== 'active' || !resolution.session) {
-    return <DemoSessionState status={resolution.status} />
-  }
-
-  return <DemoAttendeeApp session={resolution.session} />
-}
-
 function UnsupportedRoute() {
   return (
     <main className="app-shell">
       <section className="attend-panel" aria-labelledby="route-title">
         <p className="eyebrow">출석 체크</p>
         <h1 id="route-title">사용할 수 없는 경로입니다</h1>
-        <p className="support-copy">출석은 / 또는 /attend, 데모 관리는 /admin, QR 모니터는 /qr 경로에서 진행해 주세요.</p>
+        <p className="support-copy">출석은 안내된 QR을 스캔하고, 관리는 /admin 경로에서 진행해 주세요.</p>
       </section>
     </main>
   )
 }
 
-function QrMonitorApp() {
-  const target = getConfiguredAttendanceTargetUrl()
-
-  if (!target.ok) {
-    return (
-      <main className="qr-shell">
-        <section className="qr-panel qr-error-panel" aria-labelledby="qr-title">
-          <p className="eyebrow">QR 모니터</p>
-          <h1 id="qr-title">출석 QR 설정 필요</h1>
-          <div className="notice notice-error" role="alert">
-            {target.error}
-          </div>
-        </section>
-      </main>
-    )
-  }
-
+function InvalidAttendanceQr() {
   return (
-    <main className="qr-shell">
-      <section className="qr-panel" aria-labelledby="qr-title">
-        <div className="qr-heading">
-          <p className="eyebrow">QR 모니터</p>
-          <h1 id="qr-title">출석 체크</h1>
-        </div>
-        <div className="qr-code-frame" aria-label="출석 체크 QR 코드">
-          <QRCodeSVG
-            data-testid="attendance-qr-code"
-            value={target.url}
-            size={328}
-            level="M"
-            marginSize={4}
-            title="출석 체크 QR"
-          />
-        </div>
-        <div className="qr-target">
-          <p className="section-label">스캔 대상</p>
-          <p className="qr-target-url">{target.url}</p>
-        </div>
+    <main className="app-shell">
+      <section className="attend-panel" aria-labelledby="invalid-qr-title">
+        <p className="eyebrow">출석 체크</p>
+        <h1 id="invalid-qr-title">유효한 출석 QR이 필요합니다</h1>
+        <p className="support-copy">예배일과 예배 부서가 포함된 QR을 다시 스캔해 주세요.</p>
       </section>
     </main>
   )
@@ -524,30 +376,42 @@ export default function App(props: AttendeeAppProps) {
   const path = window.location.pathname
 
   if (path === '/admin') {
-    return <AdminShell />
+    let repository: AttendanceRepository
+    if (props.repository) {
+      repository = props.repository
+    } else {
+      try {
+        repository = createRuntimeAttendanceRepository()
+      } catch (error) {
+        return <RuntimeConfigurationError error={error} />
+      }
+    }
+
+    return (
+      <Suspense fallback={<main className="app-shell" aria-busy="true" />}>
+        <AdminShell repository={repository} />
+      </Suspense>
+    )
   }
 
-  if (path === '/qr') {
-    return <QrMonitorApp />
-  }
-
-  if (path !== '/' && path !== '/attend') {
+  if (path !== '/attend') {
     return <UnsupportedRoute />
   }
 
-  const demoSessionId = path === '/attend' ? parseDemoSessionId(window.location.search) : undefined
+  const serviceDate = parseAttendanceServiceDate(window.location.search)
+  const servicePart = parseAttendanceServicePart(window.location.search)
 
-  if (demoSessionId) {
-    return <DemoAttendeeRoute resolution={resolveDemoSessionState(demoSessionId)} />
+  if (!serviceDate || !servicePart) {
+    return <InvalidAttendanceQr />
   }
 
   if (props.repository) {
-    return <AttendeeApp repository={props.repository} />
+    return <AttendeeApp repository={props.repository} serviceDate={serviceDate} servicePart={servicePart} />
   }
 
   try {
     const repository = createRuntimeAttendanceRepository()
-    return <AttendeeApp repository={repository} />
+    return <AttendeeApp repository={repository} serviceDate={serviceDate} servicePart={servicePart} />
   } catch (error) {
     return <RuntimeConfigurationError error={error} />
   }

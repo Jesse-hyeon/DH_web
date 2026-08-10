@@ -1,0 +1,35 @@
+{
+  "name": "check-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
+    "test": "vitest run",
+    "test:rules": "vitest run src/lib/firestore.rules.test.ts --reporter=dot",
+    "test:emulator": "node scripts/firestore-emulator-check.mjs",
+    "test:watch": "vitest",
+    "privacy:scan": "node scripts/privacy-scan.mjs",
+    "release:check": "node scripts/release-check.mjs",
+    "demo:seed": "node scripts/demo-seed.mjs"
+  },
+  "dependencies": {
+    "firebase": "^12.17.1",
+    "qrcode.react": "^4.2.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^5.0.4",
+    "jsdom": "^26.1.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.6",
+    "vitest": "^3.2.4"
+  }
+}

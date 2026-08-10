@@ -1,0 +1,29 @@
+{
+  "hosting": {
+    "public": "dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "**/.omx/**",
+      "**/src/**",
+      "**/scripts/**",
+      "**/docs/**",
+      "**/*service-account*.json",
+      "**/*serviceAccount*.json",
+      "**/*credentials*.json",
+      "**/*.pem",
+      "**/*.key"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  }
+}

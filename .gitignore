@@ -1,0 +1,17 @@
+.env.local
+.firebaserc
+
+node_modules/
+dist/
+.firebase/
+coverage/
+.omx/
+.vite/
+
+firebase-debug.log
+firebase-debug.*.log
+
+.DS_Store
+*.swp
+*.swo
+*.tsbuildinfo

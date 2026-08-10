@@ -1,0 +1,135 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function memberPath(memberId) {
+      return /databases/$(database)/documents/members/$(memberId);
+    }
+
+    function memberDocument(memberId) {
+      return get(memberPath(memberId)).data;
+    }
+
+    function currentServicePath() {
+      return /databases/$(database)/documents/serviceConfig/currentServiceKey;
+    }
+
+    function currentServiceKey() {
+      return get(currentServicePath()).data.serviceKey;
+    }
+
+    function hasPublicMemberFields(data) {
+      return data.keys().hasOnly(['memberId', 'displayLabel', 'searchName', 'sortKey'])
+        && data.keys().hasAll(['memberId', 'displayLabel', 'searchName', 'sortKey']);
+    }
+
+    function isPublicMember(memberId, data) {
+      return hasPublicMemberFields(data)
+        && data.memberId == memberId
+        && data.memberId is string
+        && data.memberId.size() > 0
+        && data.displayLabel is string
+        && data.displayLabel.size() > 0
+        && data.searchName is string
+        && data.searchName.size() > 0
+        && data.sortKey is string
+        && data.sortKey.size() > 0;
+    }
+
+    function isCurrentServiceConfig(data) {
+      return data.keys().hasOnly(['serviceKey'])
+        && data.keys().hasAll(['serviceKey'])
+        && data.serviceKey is string;
+    }
+
+    function hasAttendanceFields() {
+      return request.resource.data.keys().hasOnly([
+          'memberId',
+          'displayNameSnapshot',
+          'serviceKey',
+          'submittedAt',
+          'createdAtClient',
+        ])
+        && request.resource.data.keys().hasAll([
+          'memberId',
+          'displayNameSnapshot',
+          'serviceKey',
+          'submittedAt',
+        ]);
+    }
+
+    function hasAttendanceFieldTypes() {
+      return request.resource.data.memberId is string
+        && request.resource.data.memberId.size() > 0
+        && request.resource.data.memberId.size() <= 128
+        && request.resource.data.displayNameSnapshot is string
+        && request.resource.data.displayNameSnapshot.size() > 0
+        && request.resource.data.displayNameSnapshot.size() <= 200
+        && request.resource.data.serviceKey is string
+        && request.resource.data.serviceKey.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && request.resource.data.submittedAt == request.time
+        && (
+          !request.resource.data.keys().hasAny(['createdAtClient'])
+          || request.resource.data.createdAtClient is timestamp
+        );
+    }
+
+    function hasAllowlistedMemberSnapshot() {
+      return exists(memberPath(request.resource.data.memberId))
+        && isPublicMember(
+          request.resource.data.memberId,
+          memberDocument(request.resource.data.memberId)
+        )
+        && memberDocument(request.resource.data.memberId).displayLabel
+          == request.resource.data.displayNameSnapshot;
+    }
+
+    function hasCurrentServiceConfig() {
+      return exists(currentServicePath())
+        && isCurrentServiceConfig(get(currentServicePath()).data);
+    }
+
+    function usesCurrentServiceKey(serviceKey) {
+      return hasCurrentServiceConfig()
+        && serviceKey == currentServiceKey()
+        && request.resource.data.serviceKey == serviceKey;
+    }
+
+    function isAttendanceCreate(serviceKey) {
+      return hasAttendanceFields()
+        && hasAttendanceFieldTypes()
+        && hasAllowlistedMemberSnapshot()
+        && usesCurrentServiceKey(serviceKey);
+    }
+
+    match /members/{memberId} {
+      allow get: if isPublicMember(memberId, resource.data);
+      // Query rules are not filters: list access relies on the immutable,
+      // dummy-only seed contract and validates shape on direct gets/submission creates.
+      allow list: if request.query.limit != null
+        && request.query.limit <= 2000;
+      allow create, update, delete: if false;
+    }
+
+    match /serviceConfig/currentServiceKey {
+      allow get: if isCurrentServiceConfig(resource.data);
+      allow list, create, update, delete: if false;
+    }
+
+    match /serviceConfig/{configId} {
+      allow read, write: if false;
+    }
+
+    match /attendanceServices/{serviceKey}/submissions/{submissionId} {
+      allow create: if isAttendanceCreate(serviceKey);
+      allow get: if serviceKey == currentServiceKey()
+        && resource.data.serviceKey == serviceKey;
+      // The service path is the query boundary; do not add an unprovable
+      // resource.data predicate to this list rule.
+      allow list: if serviceKey == currentServiceKey()
+        && request.query.limit != null
+        && request.query.limit <= 100;
+      allow update, delete: if false;
+    }
+  }
+}

@@ -14,7 +14,8 @@
     "test:watch": "vitest",
     "privacy:scan": "node scripts/privacy-scan.mjs",
     "release:check": "node scripts/release-check.mjs",
-    "demo:seed": "node scripts/demo-seed.mjs"
+    "demo:seed": "node scripts/demo-seed.mjs",
+    "attendance:seed-history": "node scripts/seed-historical-attendance.mjs"
   },
   "dependencies": {
     "firebase": "^12.17.1",

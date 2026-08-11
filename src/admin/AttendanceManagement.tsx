@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   MAX_ADMIN_ROWS,
@@ -7,7 +7,12 @@ import {
 } from '../lib/attendanceRepository'
 import type { ServiceKey } from '../domain/types'
 import { ADMIN_DEMO_FIXTURES } from './demoData'
-import { selectAttendanceRows, selectSessionTotals, type AdminDemoPeriod } from './selectors'
+import {
+  selectAttendanceRows,
+  selectSessionTotals,
+  type AdminDemoAttendanceRow,
+  type AdminDemoPeriod,
+} from './selectors'
 import type {
   AdminDemoAggregateInput,
   AdminDemoAttendanceEvent,
@@ -15,6 +20,7 @@ import type {
   AdminDemoServicePart,
   AdminDemoServiceSession,
 } from './types'
+import { recentSundayServiceDates } from './serviceCalendar'
 
 const MAX_VISIBLE_ATTENDANCE_ROWS = 100
 const PERIOD_OPTIONS: ReadonlyArray<{ value: AdminDemoPeriod; label: string }> = [
@@ -54,100 +60,148 @@ function fixtureInput(fixtures: AdminDemoFixtureBundle): AdminDemoAggregateInput
 
 export function mergeCurrentServiceAttendance(
   fixtures: AdminDemoFixtureBundle,
-  currentAttendance: CurrentServiceAttendance | null,
+  currentAttendance: CurrentServiceAttendance | ReadonlyArray<CurrentServiceAttendance> | null,
 ): AdminDemoAggregateInput {
-  const baseInput = fixtureInput(fixtures)
+  let input = fixtureInput(fixtures)
   if (!currentAttendance) {
-    return baseInput
-  }
-
-  const membersById = new Set(fixtures.members.map((member) => member.id))
-  const existingCurrentSessions = fixtures.sessions.filter(
-    (session) => session.date === currentAttendance.serviceKey,
-  )
-  const currentWeekNumber = existingCurrentSessions[0]?.weekNumber
-    ?? Math.max(...fixtures.sessions.map((session) => session.weekNumber), 0) + 1
-  const currentSessions: ReadonlyArray<AdminDemoServiceSession> = existingCurrentSessions.length > 0
-    ? existingCurrentSessions
-    : ([1, 2, 3] as const).map((part) => ({
-      id: `firebase-session-${currentAttendance.serviceKey}-p${part}`,
-      part,
-      date: currentAttendance.serviceKey,
-      startsAt: part === 1 ? '07:30' : part === 2 ? '09:30' : '11:30',
-      weekNumber: currentWeekNumber,
-      label: `${currentAttendance.serviceKey} ${part}부`,
-    }))
-  const sessions = existingCurrentSessions.length > 0
-    ? [...fixtures.sessions]
-    : [...fixtures.sessions, ...currentSessions]
-  const currentDatePlaceholders: AdminDemoAttendanceEvent[] = existingCurrentSessions.length > 0
-    ? []
-    : fixtures.members.flatMap((member) => currentSessions.map((session) => ({
-      id: `firebase-placeholder-${member.id}-${session.part}`,
-      memberId: member.id,
-      sessionId: session.id,
-      date: session.date,
-      part: session.part,
-      weekNumber: session.weekNumber,
-      status: 'missed' as const,
-    })))
-  const input: AdminDemoAggregateInput = {
-    ...baseInput,
-    referenceDate: currentAttendance.serviceKey > baseInput.referenceDate
-      ? currentAttendance.serviceKey
-      : baseInput.referenceDate,
-    sessions,
-    events: [...fixtures.events, ...currentDatePlaceholders],
-  }
-  const sessionsByPart = new Map(currentSessions.map((session) => [session.part, session] as const))
-
-  if (currentAttendance.rows.length === 0) {
     return input
   }
 
-  const firstAttendanceByMember = new Map<string, (typeof currentAttendance.rows)[number]>()
-  const sortedRows = [...currentAttendance.rows].sort((left, right) => {
-    const leftTime = left.submittedAt?.getTime() ?? Number.MAX_SAFE_INTEGER
-    const rightTime = right.submittedAt?.getTime() ?? Number.MAX_SAFE_INTEGER
-    return leftTime - rightTime || left.id.localeCompare(right.id)
-  })
-  for (const row of sortedRows) {
-    if (membersById.has(row.memberId) && !firstAttendanceByMember.has(row.memberId)) {
-      firstAttendanceByMember.set(row.memberId, row)
+  const attendanceEntries = Array.isArray(currentAttendance)
+    ? currentAttendance
+    : [currentAttendance]
+  const membersById = new Set(fixtures.members.map((member) => member.id))
+  for (const attendance of attendanceEntries) {
+    const existingSessions = input.sessions.filter((session) => session.date === attendance.serviceKey)
+    const weekNumber = existingSessions[0]?.weekNumber
+      ?? Math.max(...input.sessions.map((session) => session.weekNumber), 0) + 1
+    const currentSessions: ReadonlyArray<AdminDemoServiceSession> = existingSessions.length > 0
+      ? existingSessions
+      : ([1, 2, 3] as const).map((part) => ({
+        id: `firebase-session-${attendance.serviceKey}-p${part}`,
+        part,
+        date: attendance.serviceKey,
+        startsAt: part === 1 ? '07:30' : part === 2 ? '09:30' : '11:30',
+        weekNumber,
+        label: `${attendance.serviceKey} ${part}부`,
+      }))
+    const placeholders: AdminDemoAttendanceEvent[] = existingSessions.length > 0
+      ? []
+      : fixtures.members.flatMap((member) => currentSessions.map((session) => ({
+        id: `firebase-placeholder-${member.id}-${session.date}-${session.part}`,
+        memberId: member.id,
+        sessionId: session.id,
+        date: session.date,
+        part: session.part,
+        weekNumber: session.weekNumber,
+        status: 'missed' as const,
+      })))
+    input = {
+      ...input,
+      referenceDate: attendance.serviceKey > input.referenceDate
+        ? attendance.serviceKey
+        : input.referenceDate,
+      sessions: existingSessions.length > 0
+        ? input.sessions
+        : [...input.sessions, ...currentSessions],
+      events: [...input.events, ...placeholders],
     }
-  }
-
-  const liveMemberIds = new Set(firstAttendanceByMember.keys())
-  const events = input.events.map((event) => (
-    event.date === currentAttendance.serviceKey && liveMemberIds.has(event.memberId)
-      ? { ...event, status: 'missed' as const }
-      : event
-  ))
-
-  for (const row of firstAttendanceByMember.values()) {
-    const part = row.servicePart
-    const session = sessionsByPart.get(part)
-    if (!session) {
-      continue
-    }
-
-    events.push({
-      id: `firebase-${row.id}`,
-      memberId: row.memberId,
-      sessionId: session.id,
-      date: session.date,
-      part,
-      weekNumber: session.weekNumber,
-      status: 'attended',
+    const sessionsByPart = new Map(currentSessions.map((session) => [session.part, session] as const))
+    const firstAttendanceByMember = new Map<string, (typeof attendance.rows)[number]>()
+    const sortedRows = [...attendance.rows].sort((left, right) => {
+      const leftTime = left.submittedAt?.getTime() ?? Number.MAX_SAFE_INTEGER
+      const rightTime = right.submittedAt?.getTime() ?? Number.MAX_SAFE_INTEGER
+      return leftTime - rightTime || left.id.localeCompare(right.id)
     })
+    for (const row of sortedRows) {
+      if (membersById.has(row.memberId) && !firstAttendanceByMember.has(row.memberId)) {
+        firstAttendanceByMember.set(row.memberId, row)
+      }
+    }
+
+    const events = input.events.map((event) => (
+      event.date === attendance.serviceKey
+        ? { ...event, status: 'missed' as const }
+        : event
+    ))
+
+    for (const row of firstAttendanceByMember.values()) {
+      const session = sessionsByPart.get(row.servicePart)
+      if (!session) {
+        continue
+      }
+
+      events.push({
+        id: `firebase-${row.id}`,
+        memberId: row.memberId,
+        sessionId: session.id,
+        date: session.date,
+        part: row.servicePart,
+        weekNumber: session.weekNumber,
+        status: 'attended',
+      })
+    }
+
+    input = { ...input, events }
   }
 
-  return { ...input, events }
+  return input
 }
 
 interface AttendanceDateColumn {
   date: string
   sessionIds: ReadonlyArray<string>
+}
+
+function escapeExcelXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+function excelCell(value: string, styleId?: string): string {
+  const style = styleId ? ` ss:StyleID="${styleId}"` : ''
+  return `<Cell${style}><Data ss:Type="String">${escapeExcelXml(value)}</Data></Cell>`
+}
+
+export function buildAttendanceExcelXml(
+  rows: ReadonlyArray<AdminDemoAttendanceRow>,
+  dates: ReadonlyArray<string>,
+): string {
+  const header = ['교인', '교구', ...dates.map(formatDate), '출석률']
+  const bodyRows = rows.map((row) => {
+    const attendanceByDate = dates.map((date) => {
+      const attended = row.events.find((event) => event.date === date && event.status === 'attended')
+      return attended ? `${attended.part}부` : '미확인'
+    })
+    const values = [
+      row.member.label,
+      row.member.cohort,
+      ...attendanceByDate,
+      formatRate(row.rate),
+    ]
+    return `<Row>${values.map((value) => excelCell(value)).join('')}</Row>`
+  })
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+ <Styles>
+  <Style ss:ID="Header"><Font ss:Bold="1"/><Interior ss:Color="#EAF2FF" ss:Pattern="Solid"/></Style>
+ </Styles>
+ <Worksheet ss:Name="출석부">
+  <Table>
+   <Row>${header.map((value) => excelCell(value, 'Header')).join('')}</Row>
+   ${bodyRows.join('\n   ')}
+  </Table>
+ </Worksheet>
+</Workbook>`
 }
 
 function AttendanceStatus({
@@ -191,12 +245,21 @@ export default function AttendanceManagement({
   repository,
   serviceDate,
 }: AttendanceManagementProps) {
-  const [currentAttendance, setCurrentAttendance] = useState<CurrentServiceAttendance | null>(null)
-  const input = useMemo(
-    () => mergeCurrentServiceAttendance(fixtures, currentAttendance),
-    [currentAttendance, fixtures],
-  )
   const [period, setPeriod] = useState<AdminDemoPeriod>('last-4-weeks')
+  const [liveAttendances, setLiveAttendances] = useState<ReadonlyArray<CurrentServiceAttendance>>([])
+  const attendanceCache = useRef(new Map<string, CurrentServiceAttendance>())
+  const attendanceFixtures = useMemo<AdminDemoFixtureBundle>(() => (
+    repository
+      ? {
+        ...fixtures,
+        events: fixtures.events.map((event) => ({ ...event, status: 'missed' as const })),
+      }
+      : fixtures
+  ), [fixtures, repository])
+  const input = useMemo(
+    () => mergeCurrentServiceAttendance(attendanceFixtures, liveAttendances),
+    [attendanceFixtures, liveAttendances],
+  )
   const [memberQuery, setMemberQuery] = useState('')
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null)
   const [liveAttendanceError, setLiveAttendanceError] = useState('')
@@ -232,6 +295,20 @@ export default function AttendanceManagement({
     [allRows, selectedMemberId],
   )
   const selectedPrimaryPart = selectedDetailRow ? primaryAttendedPart(selectedDetailRow.events) : undefined
+  const selectedPeriodLabel = PERIOD_OPTIONS.find((option) => option.value === period)?.label ?? '출석'
+
+  function downloadAttendanceExcel() {
+    const workbook = buildAttendanceExcelXml(rows, dateColumns.map((column) => column.date))
+    const blob = new Blob([workbook], { type: 'application/vnd.ms-excel;charset=utf-8' })
+    const downloadUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = downloadUrl
+    link.download = `대흥교회_출석부_${selectedPeriodLabel.replace(/\s/g, '')}_${input.referenceDate}.xls`
+    document.body.append(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(downloadUrl)
+  }
 
   useEffect(() => {
     if (!repository) {
@@ -241,18 +318,31 @@ export default function AttendanceManagement({
     let isActive = true
     setIsRefreshing(true)
     setLiveAttendanceError('')
-    const attendanceRequest = serviceDate
-      ? repository.getServiceAttendance(serviceDate, MAX_ADMIN_ROWS)
-      : repository.getCurrentServiceAttendance(MAX_ADMIN_ROWS)
-    void attendanceRequest
+    const referenceDateRequest = serviceDate
+      ? Promise.resolve(serviceDate)
+      : repository.getCurrentServiceConfig().then((config) => config.serviceKey)
+    void referenceDateRequest
+      .then(async (referenceDate) => {
+        const dateCount = period === 'last-4-weeks' ? 4 : period === 'last-3-months' ? 13 : 26
+        const dates = recentSundayServiceDates(referenceDate, dateCount)
+        return Promise.all(dates.map(async (date) => {
+          const cached = attendanceCache.current.get(date)
+          if (cached) {
+            return cached
+          }
+          const attendance = await repository.getServiceAttendance(date, MAX_ADMIN_ROWS)
+          attendanceCache.current.set(date, attendance)
+          return attendance
+        }))
+      })
       .then((attendance) => {
         if (isActive) {
-          setCurrentAttendance(attendance)
+          setLiveAttendances(attendance)
         }
       })
       .catch(() => {
         if (isActive) {
-          setCurrentAttendance(null)
+          setLiveAttendances([])
           setLiveAttendanceError('실시간 출석 정보를 불러오지 못했습니다. 화면을 새로고침해 주세요.')
         }
       })
@@ -265,7 +355,7 @@ export default function AttendanceManagement({
     return () => {
       isActive = false
     }
-  }, [refreshKey, repository, serviceDate])
+  }, [period, refreshKey, repository, serviceDate])
 
   useEffect(() => {
     if (!selectedDetailRow) {
@@ -286,7 +376,10 @@ export default function AttendanceManagement({
     <section className="attendance-management" data-testid="attendance-management" aria-label="출석 관리">
       <section className="admin-dashboard-panel attendance-table-panel" aria-labelledby="attendance-table-title">
         <div className="admin-panel-heading">
-          <h2 id="attendance-table-title">교인별 출석 현황</h2>
+          <div className="attendance-table-title-group">
+            <h2 id="attendance-table-title">교인별 출석 현황</h2>
+            <p>전체 교인 <strong>{fixtures.members.length.toLocaleString('ko-KR')}명</strong></p>
+          </div>
           <div className="attendance-table-controls">
             <fieldset className="attendance-period-control">
               <legend>기간</legend>
@@ -306,10 +399,10 @@ export default function AttendanceManagement({
               </div>
             </fieldset>
             <label className="attendance-member-search">
-              <span className="sr-only">회원 검색</span>
+              <span className="sr-only">교인 검색</span>
               <input
                 id="attendance-member-search"
-                aria-label="회원 검색"
+                aria-label="교인 검색"
                 value={memberQuery}
                 onChange={(event) => setMemberQuery(event.target.value)}
                 placeholder="이름 검색"
@@ -319,9 +412,21 @@ export default function AttendanceManagement({
               className="attendance-refresh-button"
               type="button"
               disabled={isRefreshing}
-              onClick={() => setRefreshKey((value) => value + 1)}
+              onClick={() => {
+                attendanceCache.current.clear()
+                setRefreshKey((value) => value + 1)
+              }}
             >
               {isRefreshing ? '불러오는 중' : '출석 새로고침'}
+            </button>
+            <button
+              className="attendance-export-button"
+              type="button"
+              aria-label={`${selectedPeriodLabel} 출석부 엑셀 다운로드`}
+              disabled={rows.length === 0}
+              onClick={downloadAttendanceExcel}
+            >
+              엑셀 다운로드
             </button>
           </div>
         </div>
@@ -337,7 +442,7 @@ export default function AttendanceManagement({
             <table className="attendance-table">
               <thead>
                 <tr>
-                  <th scope="col">회원</th>
+                  <th scope="col">교인</th>
                   {dateColumns.map((column) => (
                     <th scope="col" key={column.date}>
                       {formatDate(column.date)}

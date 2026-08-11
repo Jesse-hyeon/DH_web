@@ -2,6 +2,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import type { AttendanceRepository, CurrentServiceAttendance } from '../lib/attendanceRepository'
 import AdminDashboard from './AdminDashboard'
 import { ADMIN_DEMO_FIXTURES, ADMIN_DEMO_REFERENCE_DATE } from './demoData'
 import {
@@ -15,13 +16,14 @@ interface RenderedDashboard {
   root: Root
 }
 
-async function renderDashboard(): Promise<RenderedDashboard> {
+async function renderDashboard(repository?: AttendanceRepository): Promise<RenderedDashboard> {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
 
   await act(async () => {
-    root.render(<AdminDashboard />)
+    root.render(<AdminDashboard repository={repository} />)
+    await Promise.resolve()
   })
 
   return { container, root }
@@ -122,5 +124,45 @@ describe('AdminDashboard', () => {
       const row = rendered?.container.querySelector(`[data-service-part="${average.part}"]`)
       expect(row?.textContent).toContain(`${average.attendedCount.toLocaleString('ko-KR')}명 참석`)
     })
+  })
+
+  it('uses actual repository check-ins for trend and service comparison charts', async () => {
+    const totalsByDate = new Map([
+      ['2026-07-26', 1],
+      ['2026-08-02', 2],
+      ['2026-08-09', 3],
+      ['2026-08-16', 6],
+    ])
+    const getServiceAttendance = async (serviceKey: string): Promise<CurrentServiceAttendance> => {
+      const totalCount = totalsByDate.get(serviceKey) ?? 0
+      const rows = Array.from({ length: totalCount }, (_, index) => ({
+        id: `${serviceKey}-${index}`,
+        memberId: `m-${index}`,
+        displayNameSnapshot: `교인 ${index}`,
+        serviceKey,
+        servicePart: (index < 1 ? 1 : index < 3 ? 2 : 3) as 1 | 2 | 3,
+        submittedAt: new Date(`${serviceKey}T01:00:00.000Z`),
+      }))
+      return { serviceKey, totalCount, rows }
+    }
+    const repository = {
+      getCurrentServiceConfig: async () => ({ serviceKey: '2026-08-16' }),
+      getServiceAttendance,
+    } as unknown as AttendanceRepository
+
+    rendered = await renderDashboard(repository)
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+      await Promise.resolve()
+    })
+
+    expect(Array.from(rendered.container.querySelectorAll('.admin-trend-value')).map(
+      (element) => element.textContent,
+    )).toEqual(['1', '2', '3', '6'])
+    expect(Array.from(rendered.container.querySelectorAll('.admin-service-column-value')).map(
+      (element) => element.textContent,
+    )).toEqual(['1명', '2명', '3명'])
+    expect(rendered.container.querySelector<HTMLInputElement>('input[aria-label="예배 출석 날짜"]')?.value)
+      .toBe('2026-08-16')
   })
 })

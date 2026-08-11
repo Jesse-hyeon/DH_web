@@ -457,14 +457,14 @@ describe('App admin shell', () => {
       .toBe('출석 관리')
   })
 
-  it('opens the attendance view and loads the bounded current-service rows', async () => {
-    const repository = createRepository()
-    const getCurrentServiceAttendance = vi.spyOn(repository, 'getCurrentServiceAttendance')
+  it('opens the attendance view and loads the bounded recent service rows', async () => {
+    const repository = createRepository({ serviceKey: '2026-08-16' })
+    const getServiceAttendance = vi.spyOn(repository, 'getServiceAttendance')
 
     rendered = await renderApp(repository, '/admin?view=attendance-management')
 
     expect(rendered.container.querySelector('nav a[aria-current="page"]')?.textContent).toBe('출석 관리')
-    expect(getCurrentServiceAttendance).toHaveBeenCalledOnce()
-    expect(getCurrentServiceAttendance).toHaveBeenCalledWith(2_000)
+    expect(getServiceAttendance).toHaveBeenCalledTimes(4)
+    expect(getServiceAttendance).toHaveBeenCalledWith('2026-08-16', 2_000)
   })
 })

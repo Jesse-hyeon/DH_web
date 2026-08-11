@@ -145,7 +145,7 @@ export default function AdminShell({ repository }: AdminShellProps) {
 
       <main className="admin-main" aria-label="관리자 화면">
         {selectedView.id === 'dashboard'
-          ? <AdminDashboard />
+          ? <AdminDashboard repository={repository} />
           : selectedView.id === 'qr-generation'
             ? (
               <QRGeneration

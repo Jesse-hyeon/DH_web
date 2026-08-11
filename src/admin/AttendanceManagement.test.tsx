@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { AttendanceRepository } from '../lib/attendanceRepository'
 import type { ServiceKey } from '../domain/types'
-import AttendanceManagement, { mergeCurrentServiceAttendance } from './AttendanceManagement'
+import AttendanceManagement, {
+  buildAttendanceExcelXml,
+  mergeCurrentServiceAttendance,
+} from './AttendanceManagement'
 import { ADMIN_DEMO_FIXTURES } from './demoData'
 import { selectAttendanceRows, selectSessionTotals } from './selectors'
 import type { AdminDemoFixtureBundle } from './types'
@@ -62,6 +65,9 @@ describe('AttendanceManagement', () => {
 
     expect(container.querySelector('[data-testid="attendance-management"]')).toBeTruthy()
     expect(container.querySelector('h2')?.textContent).toBe('교인별 출석 현황')
+    expect(container.querySelector('.attendance-table-title-group')?.textContent).toContain('전체 교인 2,000명')
+    expect(container.querySelector('.attendance-table thead th')?.textContent).toBe('교인')
+    expect(container.querySelector<HTMLInputElement>('[aria-label="교인 검색"]')).toBeTruthy()
     expect(container.querySelectorAll('.attendance-table tbody tr')).toHaveLength(Math.min(expectedRows.length, 100))
     const expectedDates = new Set(expectedSessions.map((total) => total.session.date))
     expect(container.querySelectorAll('.attendance-table thead th')).toHaveLength(expectedDates.size + 2)
@@ -146,9 +152,42 @@ describe('AttendanceManagement', () => {
     expect(container.querySelector('[role="status"]')?.textContent).toBe('검색 결과가 없습니다.')
   })
 
+  it('builds an Excel workbook from only the selected period dates', () => {
+    const rows = selectAttendanceRows(ADMIN_DEMO_FIXTURES, {
+      period: 'last-4-weeks',
+      servicePart: 'all',
+    })
+    const dates = [...new Set(selectSessionTotals(ADMIN_DEMO_FIXTURES, {
+      period: 'last-4-weeks',
+      servicePart: 'all',
+    }).map((total) => total.session.date))]
+    const workbook = buildAttendanceExcelXml(rows, dates)
+
+    expect(workbook).toContain('ss:Name="출석부"')
+    expect(workbook).toContain('교인')
+    expect(workbook).toContain('교구')
+    expect(workbook).toContain('출석률')
+    expect(workbook).toContain('2026.07.26')
+    expect(workbook).toContain('2026.08.16')
+    expect(workbook).not.toContain('2026.07.19')
+    expect(workbook).toMatch(/[123]부|미확인/)
+  })
+
+  it('labels the Excel download with the active attendance period', async () => {
+    rendered = await renderView()
+    const periodButton = rendered.container.querySelector<HTMLButtonElement>('[data-period="last-3-months"]')
+    if (!periodButton) throw new Error('Unable to find period button')
+
+    await act(async () => periodButton.click())
+
+    expect(rendered.container.querySelector<HTMLButtonElement>('.attendance-export-button')?.ariaLabel)
+      .toBe('최근 3개월 출석부 엑셀 다운로드')
+  })
+
   it('shows an explicit retry message when live attendance cannot be loaded', async () => {
     const repository = {
-      getCurrentServiceAttendance: vi.fn().mockRejectedValue(new Error('offline')),
+      getCurrentServiceConfig: vi.fn().mockResolvedValue({ serviceKey: '2026-08-16' }),
+      getServiceAttendance: vi.fn().mockRejectedValue(new Error('offline')),
     } as unknown as AttendanceRepository
 
     rendered = await renderView(ADMIN_DEMO_FIXTURES, repository)
@@ -160,13 +199,16 @@ describe('AttendanceManagement', () => {
       .toBe('실시간 출석 정보를 불러오지 못했습니다. 화면을 새로고침해 주세요.')
   })
 
-  it('reloads all bounded current-service rows only when the administrator requests it', async () => {
-    const getCurrentServiceAttendance = vi.fn().mockResolvedValue({
-      serviceKey: '2026-08-16',
+  it('reloads all bounded period rows only when the administrator requests it', async () => {
+    const getServiceAttendance = vi.fn().mockImplementation(async (serviceKey: string) => ({
+      serviceKey,
       totalCount: 0,
       rows: [],
-    })
-    const repository = { getCurrentServiceAttendance } as unknown as AttendanceRepository
+    }))
+    const repository = {
+      getCurrentServiceConfig: vi.fn().mockResolvedValue({ serviceKey: '2026-08-16' }),
+      getServiceAttendance,
+    } as unknown as AttendanceRepository
 
     rendered = await renderView(ADMIN_DEMO_FIXTURES, repository)
     await act(async () => {
@@ -180,8 +222,8 @@ describe('AttendanceManagement', () => {
       await Promise.resolve()
     })
 
-    expect(getCurrentServiceAttendance).toHaveBeenCalledTimes(2)
-    expect(getCurrentServiceAttendance).toHaveBeenLastCalledWith(2_000)
+    expect(getServiceAttendance).toHaveBeenCalledTimes(8)
+    expect(getServiceAttendance).toHaveBeenLastCalledWith('2026-08-16', 2_000)
   })
 
   it('loads the service date selected in QR management instead of the separate current config', async () => {

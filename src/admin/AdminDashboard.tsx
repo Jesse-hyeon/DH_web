@@ -1,6 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { ADMIN_DEMO_FIXTURES, ADMIN_DEMO_REFERENCE_DATE } from './demoData'
+import {
+  MAX_ADMIN_ROWS,
+  type AttendanceRepository,
+  type CurrentServiceAttendance,
+} from '../lib/attendanceRepository'
 import {
   selectLongTermAbsentees,
   selectNewMembers,
@@ -10,6 +15,7 @@ import {
   type AdminDemoPeriod,
 } from './selectors'
 import type { AdminDemoMemberProfile, AdminDemoServiceAverage, AdminDemoWeeklySummary } from './types'
+import { recentSundayServiceDates } from './serviceCalendar'
 
 const numberFormatter = new Intl.NumberFormat('ko-KR')
 
@@ -34,6 +40,38 @@ const TREND_PERIOD_OPTIONS: ReadonlyArray<{ value: AdminDemoPeriod; label: strin
   { value: 'last-4-weeks', label: '최근 4주', title: '최근 4주' },
   { value: 'last-3-months', label: '최근 3개월', title: '최근 3개월' },
 ]
+
+function actualWeeklySummaries(
+  dates: ReadonlyArray<string>,
+  attendance: ReadonlyArray<CurrentServiceAttendance>,
+): ReadonlyArray<AdminDemoWeeklySummary> {
+  const attendanceByDate = new Map(attendance.map((entry) => [entry.serviceKey, entry]))
+
+  return dates.map((date, index) => {
+    const attendedCount = attendanceByDate.get(date)?.totalCount ?? 0
+    return {
+      weekNumber: index + 1,
+      dateRange: { from: date, to: date },
+      attendedCount,
+      eligibleCount: ADMIN_DEMO_FIXTURES.members.length,
+      rate: attendedCount / Math.max(ADMIN_DEMO_FIXTURES.members.length, 1),
+    }
+  })
+}
+
+function actualServiceAverages(
+  attendance: CurrentServiceAttendance | null,
+): ReadonlyArray<AdminDemoServiceAverage> {
+  return ([1, 2, 3] as const).map((part) => {
+    const attendedCount = attendance?.rows.filter((row) => row.servicePart === part).length ?? 0
+    return {
+      part,
+      attendedCount,
+      eligibleCount: ADMIN_DEMO_FIXTURES.members.length,
+      rate: attendedCount / Math.max(ADMIN_DEMO_FIXTURES.members.length, 1),
+    }
+  })
+}
 
 function WeeklyTrend({
   summaries,
@@ -259,21 +297,136 @@ function MemberSummary({
   )
 }
 
-export default function AdminDashboard() {
+export interface AdminDashboardProps {
+  repository?: AttendanceRepository
+}
+
+export default function AdminDashboard({ repository }: AdminDashboardProps) {
   const [trendPeriod, setTrendPeriod] = useState<AdminDemoPeriod>('last-4-weeks')
-  const [serviceDate, setServiceDate] = useState(ADMIN_DEMO_REFERENCE_DATE)
+  const [referenceDate, setReferenceDate] = useState<string | null>(
+    repository ? null : ADMIN_DEMO_REFERENCE_DATE,
+  )
+  const [serviceDate, setServiceDate] = useState(repository ? '' : ADMIN_DEMO_REFERENCE_DATE)
+  const [trendAttendance, setTrendAttendance] = useState<ReadonlyArray<CurrentServiceAttendance>>([])
+  const [serviceAttendance, setServiceAttendance] = useState<CurrentServiceAttendance | null>(null)
+  const [liveDashboardError, setLiveDashboardError] = useState('')
+  const attendanceCache = useRef(new Map<string, CurrentServiceAttendance>())
   const newMembers = selectNewMembers(ADMIN_DEMO_FIXTURES)
   const longTermAbsentees = selectLongTermAbsentees(ADMIN_DEMO_FIXTURES)
   const selectedTrendPeriod = TREND_PERIOD_OPTIONS.find((option) => option.value === trendPeriod)
     ?? TREND_PERIOD_OPTIONS[0]
+  const trendDates = useMemo(() => (
+    referenceDate
+      ? recentSundayServiceDates(referenceDate, trendPeriod === 'last-3-months' ? 13 : 4)
+      : []
+  ), [referenceDate, trendPeriod])
   const trendRange = selectPeriodDateRange(ADMIN_DEMO_FIXTURES, trendPeriod)
-  const trendSummaries = selectWeeklySummariesInRange(ADMIN_DEMO_FIXTURES, trendRange)
-  const serviceAverages = selectServiceAverages(ADMIN_DEMO_FIXTURES, {
+  const fixtureTrendSummaries = selectWeeklySummariesInRange(ADMIN_DEMO_FIXTURES, trendRange)
+  const trendSummaries = repository
+    ? actualWeeklySummaries(trendDates, trendAttendance)
+    : fixtureTrendSummaries
+  const fixtureServiceAverages = selectServiceAverages(ADMIN_DEMO_FIXTURES, {
     dateRange: { from: serviceDate, to: serviceDate },
   })
+  const serviceAverages = repository
+    ? actualServiceAverages(serviceAttendance)
+    : fixtureServiceAverages
+
+  useEffect(() => {
+    if (!repository) {
+      return undefined
+    }
+
+    let isActive = true
+    void repository.getCurrentServiceConfig()
+      .then((config) => {
+        if (isActive) {
+          setReferenceDate(config.serviceKey)
+          setServiceDate(config.serviceKey)
+          setLiveDashboardError('')
+        }
+      })
+      .catch(() => {
+        if (isActive) {
+          setLiveDashboardError('실제 출석 기준일을 불러오지 못했습니다.')
+        }
+      })
+
+    return () => {
+      isActive = false
+    }
+  }, [repository])
+
+  useEffect(() => {
+    if (!repository || trendDates.length === 0) {
+      return undefined
+    }
+
+    let isActive = true
+    void Promise.all(trendDates.map(async (date) => {
+      const cached = attendanceCache.current.get(date)
+      if (cached) {
+        return cached
+      }
+      const attendance = await repository.getServiceAttendance(date, MAX_ADMIN_ROWS)
+      attendanceCache.current.set(date, attendance)
+      return attendance
+    }))
+      .then((attendance) => {
+        if (isActive) {
+          setTrendAttendance(attendance)
+          setLiveDashboardError('')
+        }
+      })
+      .catch(() => {
+        if (isActive) {
+          setTrendAttendance([])
+          setLiveDashboardError('실제 출석 추이를 불러오지 못했습니다.')
+        }
+      })
+
+    return () => {
+      isActive = false
+    }
+  }, [repository, trendDates])
+
+  useEffect(() => {
+    if (!repository || !serviceDate) {
+      return undefined
+    }
+
+    let isActive = true
+    const cached = attendanceCache.current.get(serviceDate)
+    const request = cached
+      ? Promise.resolve(cached)
+      : repository.getServiceAttendance(serviceDate, MAX_ADMIN_ROWS).then((attendance) => {
+        attendanceCache.current.set(serviceDate, attendance)
+        return attendance
+      })
+
+    setServiceAttendance(null)
+    void request
+      .then((attendance) => {
+        if (isActive) {
+          setServiceAttendance(attendance)
+          setLiveDashboardError('')
+        }
+      })
+      .catch(() => {
+        if (isActive) {
+          setServiceAttendance(null)
+          setLiveDashboardError('선택한 날짜의 실제 출석 정보를 불러오지 못했습니다.')
+        }
+      })
+
+    return () => {
+      isActive = false
+    }
+  }, [repository, serviceDate])
 
   return (
     <section className="admin-dashboard" data-testid="admin-dashboard" aria-label="대시보드">
+      {liveDashboardError ? <p className="admin-empty-state" role="alert">{liveDashboardError}</p> : null}
       <div className="admin-dashboard-two-column">
         <WeeklyTrend
           summaries={trendSummaries}

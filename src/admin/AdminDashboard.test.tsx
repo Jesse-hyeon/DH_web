@@ -50,14 +50,20 @@ describe('AdminDashboard', () => {
     expect(container.querySelectorAll('.admin-metric-card')).toHaveLength(0)
 
     expect(container.querySelector('.admin-trend-line-chart')).toBeTruthy()
+    expect(Number(
+      container.querySelector<SVGElement>('.admin-trend-line-chart')?.dataset.scaleFloor,
+    )).toBeGreaterThan(0)
     expect(container.querySelectorAll('.admin-trend-point')).toHaveLength(4)
     expect(container.querySelectorAll('.admin-trend-date')).toHaveLength(4)
     expect(container.textContent).not.toContain('주차')
     expect(container.querySelectorAll('.admin-service-column')).toHaveLength(
       3,
     )
-    expect(container.querySelector<HTMLInputElement>('input[aria-label="예배 출석 날짜"]')?.value)
+    expect(container.querySelector<HTMLSelectElement>('select[aria-label="예배 출석 날짜"]')?.value)
       .toBe(ADMIN_DEMO_REFERENCE_DATE)
+    expect(Array.from(
+      container.querySelectorAll<HTMLOptionElement>('select[aria-label="예배 출석 날짜"] option'),
+    ).every((option) => new Date(`${option.value}T00:00:00Z`).getUTCDay() === 0)).toBe(true)
     const serviceAverages = selectServiceAverages(ADMIN_DEMO_FIXTURES, {
       dateRange: { from: ADMIN_DEMO_REFERENCE_DATE, to: ADMIN_DEMO_REFERENCE_DATE },
     })
@@ -104,21 +110,21 @@ describe('AdminDashboard', () => {
 
   it('updates service attendance bars for the selected date', async () => {
     rendered = await renderDashboard()
-    const dateInput = rendered.container.querySelector<HTMLInputElement>('input[aria-label="예배 출석 날짜"]')
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+    const dateInput = rendered.container.querySelector<HTMLSelectElement>('select[aria-label="예배 출석 날짜"]')
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set
 
     if (!dateInput || !setter) {
       throw new Error('Unable to set service attendance date')
     }
 
     await act(async () => {
-      setter.call(dateInput, '2026-08-03')
+      setter.call(dateInput, '2026-08-02')
       dateInput.dispatchEvent(new Event('change', { bubbles: true }))
     })
 
-    expect(dateInput.value).toBe('2026-08-03')
+    expect(dateInput.value).toBe('2026-08-02')
     const expected = selectServiceAverages(ADMIN_DEMO_FIXTURES, {
-      dateRange: { from: '2026-08-03', to: '2026-08-03' },
+      dateRange: { from: '2026-08-02', to: '2026-08-02' },
     })
     expected.forEach((average) => {
       const row = rendered?.container.querySelector(`[data-service-part="${average.part}"]`)
@@ -162,7 +168,7 @@ describe('AdminDashboard', () => {
     expect(Array.from(rendered.container.querySelectorAll('.admin-service-column-value')).map(
       (element) => element.textContent,
     )).toEqual(['1명', '2명', '3명'])
-    expect(rendered.container.querySelector<HTMLInputElement>('input[aria-label="예배 출석 날짜"]')?.value)
+    expect(rendered.container.querySelector<HTMLSelectElement>('select[aria-label="예배 출석 날짜"]')?.value)
       .toBe('2026-08-16')
   })
 })

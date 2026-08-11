@@ -36,6 +36,23 @@ function formatTrendAxisDate(value: string, compact: boolean): string {
   return `${month}월`
 }
 
+function trendScaleFloor(counts: ReadonlyArray<number>): number {
+  const sortedCounts = [...counts].sort((left, right) => left - right)
+  const maxCount = Math.max(...sortedCounts, 1)
+  const middleIndex = Math.floor(sortedCounts.length / 2)
+  const medianCount = sortedCounts.length % 2 === 0
+    ? ((sortedCounts[middleIndex - 1] ?? 0) + (sortedCounts[middleIndex] ?? 0)) / 2
+    : (sortedCounts[middleIndex] ?? 0)
+  const comparableCounts = sortedCounts.filter((count) => count >= medianCount * 0.5)
+  const minComparableCount = Math.min(...comparableCounts, maxCount)
+  const comparableRange = Math.max(maxCount - minComparableCount, 1)
+  const padding = Math.max(comparableRange * 0.35, maxCount * 0.04, 1)
+  const rawFloor = Math.max(0, minComparableCount - padding)
+  const roundingUnit = Math.max(1, 10 ** Math.floor(Math.log10(maxCount / 10)))
+
+  return Math.floor(rawFloor / roundingUnit) * roundingUnit
+}
+
 const TREND_PERIOD_OPTIONS: ReadonlyArray<{ value: AdminDemoPeriod; label: string; title: string }> = [
   { value: 'last-4-weeks', label: '최근 4주', title: '최근 4주' },
   { value: 'last-3-months', label: '최근 3개월', title: '최근 3개월' },
@@ -86,6 +103,8 @@ function WeeklyTrend({
 }) {
   const [activeWeekNumber, setActiveWeekNumber] = useState<number | null>(null)
   const maxAttendedCount = Math.max(...summaries.map((summary) => summary.attendedCount), 1)
+  const scaleFloor = trendScaleFloor(summaries.map((summary) => summary.attendedCount))
+  const scaleRange = Math.max(maxAttendedCount - scaleFloor, 1)
   const compactChart = summaries.length > 8
   const chartWidth = 800
   const chartHeight = 228
@@ -98,7 +117,10 @@ function WeeklyTrend({
     summary,
     index,
     x: summaries.length === 1 ? chartWidth / 2 : plotLeft + index * xStep,
-    y: plotBottom - (summary.attendedCount / maxAttendedCount) * (plotBottom - plotTop),
+    y: plotBottom - Math.min(
+      Math.max((summary.attendedCount - scaleFloor) / scaleRange, 0),
+      1,
+    ) * (plotBottom - plotTop),
   }))
   const activePoint = points.find((point) => point.summary.weekNumber === activeWeekNumber)
   const tooltipX = activePoint ? Math.min(Math.max(activePoint.x, 76), chartWidth - 76) : 0
@@ -133,6 +155,7 @@ function WeeklyTrend({
       >
         <svg
           className="admin-trend-line-chart"
+          data-scale-floor={scaleFloor}
           viewBox={`0 0 ${chartWidth} ${chartHeight}`}
           preserveAspectRatio="xMidYMid meet"
           style={{ width: '100%' }}
@@ -204,10 +227,12 @@ function WeeklyTrend({
 
 function ServiceComparison({
   averages,
+  availableDates,
   selectedDate,
   onDateChange,
 }: {
   averages: ReadonlyArray<AdminDemoServiceAverage>
+  availableDates: ReadonlyArray<string>
   selectedDate: string
   onDateChange: (date: string) => void
 }) {
@@ -223,12 +248,15 @@ function ServiceComparison({
         </div>
         <label className="admin-service-date">
           <span className="sr-only">예배 출석 날짜</span>
-          <input
+          <select
             aria-label="예배 출석 날짜"
-            type="date"
             value={selectedDate}
             onChange={(event) => onDateChange(event.target.value)}
-          />
+          >
+            {availableDates.map((date) => (
+              <option key={date} value={date}>{formatDate(date)}</option>
+            ))}
+          </select>
         </label>
       </div>
 
@@ -320,6 +348,11 @@ export default function AdminDashboard({ repository }: AdminDashboardProps) {
       ? recentSundayServiceDates(referenceDate, trendPeriod === 'last-3-months' ? 13 : 4)
       : []
   ), [referenceDate, trendPeriod])
+  const serviceDates = useMemo(() => (
+    referenceDate
+      ? [...recentSundayServiceDates(referenceDate, 13)].reverse()
+      : serviceDate ? [serviceDate] : []
+  ), [referenceDate, serviceDate])
   const trendRange = selectPeriodDateRange(ADMIN_DEMO_FIXTURES, trendPeriod)
   const fixtureTrendSummaries = selectWeeklySummariesInRange(ADMIN_DEMO_FIXTURES, trendRange)
   const trendSummaries = repository
@@ -436,6 +469,7 @@ export default function AdminDashboard({ repository }: AdminDashboardProps) {
         />
         <ServiceComparison
           averages={serviceAverages}
+          availableDates={serviceDates}
           selectedDate={serviceDate}
           onDateChange={setServiceDate}
         />

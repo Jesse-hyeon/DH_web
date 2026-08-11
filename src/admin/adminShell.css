@@ -205,9 +205,9 @@
   gap: 8px;
 }
 
-.admin-service-date input {
+.admin-service-date select {
   min-height: 36px;
-  padding: 0 9px;
+  padding: 0 30px 0 11px;
   border: 1px solid var(--admin-border);
   border-radius: 8px;
   background: var(--admin-surface);

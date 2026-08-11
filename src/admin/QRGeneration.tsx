@@ -42,10 +42,8 @@ interface QRDateOption {
   value: AdminDemoDate
   month: number
   weekNumber: number
-  shortDate: string
   compactDate: string
   accessibleLabel: string
-  weekday: string
   isPast: boolean
 }
 
@@ -60,13 +58,11 @@ function sundayOptionsForYear(year: number, currentDate: AdminDemoDate): Readonl
   for (let date = firstSunday; parseDate(date).getUTCFullYear() === year; date = addDays(date, 7)) {
     const parsed = parseDate(date)
     options.push({
-    value: date,
+      value: date,
       month: parsed.getUTCMonth() + 1,
       weekNumber: weekOfMonth(date),
-      shortDate: formatDate(date),
       compactDate: `${String(parsed.getUTCMonth() + 1).padStart(2, '0')}.${String(parsed.getUTCDate()).padStart(2, '0')}`,
       accessibleLabel: `${parsed.getUTCMonth() + 1}월 ${weekOfMonth(date)}주차 예배 (${formatDate(date)})`,
-      weekday: '일요일',
       isPast: date < currentDate,
     })
   }
@@ -230,13 +226,13 @@ export default function QRGeneration({
               QR을 만들기 전에 실제 출석 URL을 설정해 주세요. {attendanceTarget.error}
             </div>
           )}
-          {attendanceTarget.ok ? (date ? (
-              <section className="qr-selected-sessions" aria-labelledby="qr-selected-date-title">
-                <div className="qr-selected-month-heading">
-                  <h3 id="qr-selected-date-title">{formatDate(date)} QR</h3>
-                </div>
-                <div className="qr-session-part-links">
-                  {SERVICE_PARTS.map((part) => {
+          {attendanceTarget.ok && (date ? (
+            <section className="qr-selected-sessions" aria-labelledby="qr-selected-date-title">
+              <div className="qr-selected-month-heading">
+                <h3 id="qr-selected-date-title">{formatDate(date)} QR</h3>
+              </div>
+              <div className="qr-session-part-links">
+                {SERVICE_PARTS.map((part) => {
                   const sessionId = `service-${date}-${part}`
                   const sessionUrl = withAttendanceSession(attendanceTarget.url, date, part)
 
@@ -258,12 +254,12 @@ export default function QRGeneration({
                       </button>
                     </div>
                   )
-                    })}
-                </div>
-              </section>
-            ) : (
-              <p className="qr-empty-month" role="status">선택할 수 있는 예배일이 없습니다.</p>
-            )) : null}
+                })}
+              </div>
+            </section>
+          ) : (
+            <p className="qr-empty-month" role="status">선택할 수 있는 예배일이 없습니다.</p>
+          ))}
         </div>
       </section>
     </section>

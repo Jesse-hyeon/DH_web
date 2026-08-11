@@ -228,5 +228,3 @@ export function createAdminDemoFixtures(): AdminDemoFixtureBundle {
 }
 
 export const ADMIN_DEMO_FIXTURES = createAdminDemoFixtures()
-
-export default ADMIN_DEMO_FIXTURES

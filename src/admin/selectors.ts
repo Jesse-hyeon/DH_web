@@ -23,16 +23,12 @@ export type AdminDemoPeriod =
   | 'current-month'
   | 'last-6-months'
   | 'all'
-  // Friendly aliases accepted by callers that use the labels from the UI.
-  | 'this-month'
-  | 'last-6-month'
 
 export type AdminDemoServicePartFilter = AdminDemoServicePart | 'all'
 
 export interface AdminDemoFilterOptions {
   period?: AdminDemoPeriod
   servicePart?: AdminDemoServicePartFilter
-  part?: AdminDemoServicePartFilter
   dateRange?: AdminDemoDateRange
 }
 
@@ -48,8 +44,6 @@ export interface AdminDemoAttendanceRow {
   attendedCount: number
   eligibleCount: number
   rate: number
-  /** Alias useful to table consumers that call the metric an attendance rate. */
-  attendanceRate: number
 }
 
 export interface AdminDemoMemberHistory {
@@ -103,14 +97,14 @@ function monthStart(date: AdminDemoDate): AdminDemoDate {
   return addMonths(date, 0)
 }
 
-function canonicalPeriod(period: AdminDemoPeriod): Exclude<AdminDemoPeriod, 'this-month' | 'last-6-month'> {
-  if (period === 'this-month') {
-    return 'current-month'
+function assertSupportedPeriod(period: unknown): asserts period is AdminDemoPeriod {
+  if (period !== 'last-4-weeks'
+    && period !== 'last-3-months'
+    && period !== 'current-month'
+    && period !== 'last-6-months'
+    && period !== 'all') {
+    throw new RangeError(`Unsupported admin period: ${String(period)}`)
   }
-  if (period === 'last-6-month') {
-    return 'last-6-months'
-  }
-  return period
 }
 
 function isServicePart(value: AdminDemoServicePartFilter | undefined): value is AdminDemoServicePart {
@@ -118,8 +112,7 @@ function isServicePart(value: AdminDemoServicePartFilter | undefined): value is 
 }
 
 function selectedPart(options: AdminDemoFilterOptions): AdminDemoServicePart | undefined {
-  const value = options.servicePart ?? options.part
-  return isServicePart(value) ? value : undefined
+  return isServicePart(options.servicePart) ? options.servicePart : undefined
 }
 
 function minDate(dates: ReadonlyArray<AdminDemoDate>, fallback: AdminDemoDate): AdminDemoDate {
@@ -147,29 +140,31 @@ export function selectPeriodDateRange(
   input: AdminDemoAggregateInput,
   period: AdminDemoPeriod = 'all',
 ): AdminDemoDateRange {
-  const canonical = canonicalPeriod(period)
+  assertSupportedPeriod(period)
 
-  if (canonical === 'all') {
+  if (period === 'all') {
     return allDataDateRange(input)
   }
 
-  if (canonical === 'current-month') {
+  if (period === 'current-month') {
     return { from: monthStart(input.referenceDate), to: input.referenceDate }
   }
 
-  if (canonical === 'last-4-weeks') {
+  if (period === 'last-4-weeks') {
     return { from: addDays(input.referenceDate, -27), to: input.referenceDate }
   }
 
-  if (canonical === 'last-3-months') {
+  if (period === 'last-3-months') {
     return { from: addMonths(input.referenceDate, -2), to: input.referenceDate }
   }
 
-  // Six calendar months means the current month plus the five preceding months.
-  return { from: addMonths(input.referenceDate, -5), to: input.referenceDate }
-}
+  if (period === 'last-6-months') {
+    // Six calendar months means the current month plus the five preceding months.
+    return { from: addMonths(input.referenceDate, -5), to: input.referenceDate }
+  }
 
-export const getPeriodDateRange = selectPeriodDateRange
+  throw new RangeError(`Unsupported admin period: ${String(period)}`)
+}
 
 function weekNumbersInRange(input: AdminDemoAggregateInput, range: AdminDemoDateRange): number[] {
   return [...new Set([
@@ -187,12 +182,17 @@ export function attendanceRate(attendedCount: number, eligibleCount: number): nu
   return eligibleCount === 0 ? 0 : attendedCount / eligibleCount
 }
 
-export const calculateAttendanceRate = attendanceRate
-
 function eventsForOptions(
   input: AdminDemoAggregateInput,
   options: AdminDemoFilterOptions = {},
 ): AdminDemoAttendanceEvent[] {
+  if ('part' in options) {
+    throw new RangeError('Use servicePart instead of the removed part filter.')
+  }
+  if (options.period !== undefined) {
+    assertSupportedPeriod(options.period)
+  }
+
   const range = options.dateRange ?? selectPeriodDateRange(input, options.period ?? 'all')
   const part = selectedPart(options)
 
@@ -209,8 +209,6 @@ export function selectFilteredEvents(
 ): ReadonlyArray<AdminDemoAttendanceEvent> {
   return eventsForOptions(input, options)
 }
-
-export const filterAttendanceEvents = selectFilteredEvents
 
 function countStatus(events: ReadonlyArray<AdminDemoAttendanceEvent>, status: AdminDemoEventStatus): number {
   return events.filter((event) => event.status === status).length
@@ -369,8 +367,6 @@ export function selectDashboardAggregates(input: AdminDemoAggregateInput): Admin
   }
 }
 
-export const selectDashboardMetrics = selectDashboardAggregates
-
 /** Returns one row per member with at least one eligible event in the selected window. */
 export function selectAttendanceRows(
   input: AdminDemoAggregateInput,
@@ -392,18 +388,16 @@ export function selectAttendanceRows(
     }
 
     const attendedCount = countStatus(memberEvents, 'attended')
+    const rate = attendanceRate(attendedCount, memberEvents.length)
     return [{
       member,
       events: memberEvents,
       attendedCount,
       eligibleCount: memberEvents.length,
-      rate: attendanceRate(attendedCount, memberEvents.length),
-      attendanceRate: attendanceRate(attendedCount, memberEvents.length),
+      rate,
     }]
   })
 }
-
-export const selectAttendanceTableRows = selectAttendanceRows
 
 export function selectMemberHistory(
   input: AdminDemoAggregateInput,
@@ -472,23 +466,15 @@ export function selectSessionTotals(
     })
 }
 
-export function selectSessionTotal(
-  input: AdminDemoAggregateInput,
-  sessionId: string,
-  options: AdminDemoFilterOptions = {},
-): AdminDemoSessionTotal | undefined {
-  return selectSessionTotals(input, options).find((total) => total.session.id === sessionId)
-}
-
 export function selectSessionParticipantCount(
   input: AdminDemoAggregateInput,
   sessionId: string,
   options: AdminDemoFilterOptions = {},
 ): number {
-  return selectSessionTotal(input, sessionId, options)?.participantCount ?? 0
+  return selectSessionTotals(input, options)
+    .find((total) => total.session.id === sessionId)
+    ?.participantCount ?? 0
 }
-
-export const getSessionTotal = selectSessionTotal
 
 /** Returns a copy of a date range clamped to the supplied inclusive bounds. */
 export function clampDateRange(range: AdminDemoDateRange, bounds: AdminDemoDateRange): AdminDemoDateRange {

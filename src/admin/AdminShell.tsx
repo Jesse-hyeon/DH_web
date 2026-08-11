@@ -13,24 +13,20 @@ export type AdminViewId = 'dashboard' | 'qr-generation' | 'attendance-management
 interface AdminViewDefinition {
   id: AdminViewId
   label: string
-  description: string
 }
 
-export const ADMIN_VIEWS: ReadonlyArray<AdminViewDefinition> = [
+const ADMIN_VIEWS: ReadonlyArray<AdminViewDefinition> = [
   {
     id: 'dashboard',
     label: '대시보드',
-    description: '관리 현황을 한눈에 확인하는 화면입니다.',
   },
   {
     id: 'qr-generation',
     label: 'QR 관리',
-    description: '출석용 QR을 관리하는 화면입니다.',
   },
   {
     id: 'attendance-management',
     label: '출석 관리',
-    description: '출석 관리를 준비하는 화면입니다.',
   },
 ]
 

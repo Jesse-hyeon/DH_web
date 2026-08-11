@@ -38,6 +38,35 @@ const DEFAULT_ADMIN_VIEW: AdminViewId = 'dashboard'
 const ADMIN_VIEW_QUERY = 'view'
 const ADMIN_SERVICE_DATE_QUERY = 'serviceDate'
 
+function AdminNavigationIcon({ view }: { view: AdminViewId }) {
+  if (view === 'dashboard') {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <rect x="3" y="3" width="5" height="5" rx="1" />
+        <rect x="12" y="3" width="5" height="5" rx="1" />
+        <rect x="3" y="12" width="5" height="5" rx="1" />
+        <rect x="12" y="12" width="5" height="5" rx="1" />
+      </svg>
+    )
+  }
+
+  if (view === 'qr-generation') {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M3 8V4a1 1 0 0 1 1-1h4M12 3h4a1 1 0 0 1 1 1v4M17 12v4a1 1 0 0 1-1 1h-4M8 17H4a1 1 0 0 1-1-1v-4" />
+        <rect x="7" y="7" width="6" height="6" rx="1.5" />
+      </svg>
+    )
+  }
+
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M7.5 4h8M7.5 10h8M7.5 16h8" />
+      <path d="m3 4 1 1 2-2M3 10l1 1 2-2M3 16l1 1 2-2" />
+    </svg>
+  )
+}
+
 function isAdminViewId(value: string | null): value is AdminViewId {
   return ADMIN_VIEWS.some((view) => view.id === value)
 }
@@ -135,7 +164,10 @@ export default function AdminShell({ repository }: AdminShellProps) {
                   className={view.id === activeView ? 'is-active' : undefined}
                   onClick={(event) => handleNavigation(event, view.id)}
                 >
-                  {view.label}
+                  <span className="admin-navigation-icon">
+                    <AdminNavigationIcon view={view.id} />
+                  </span>
+                  <span>{view.label}</span>
                 </a>
               </li>
             ))}

@@ -1,21 +1,25 @@
 .admin-shell-layout {
-  --admin-bg: #f7f8fa;
+  --admin-bg: #f3f6fb;
   --admin-surface: #ffffff;
-  --admin-surface-subtle: #f9fafb;
+  --admin-surface-subtle: #f6f8fb;
   --admin-text: #191f28;
   --admin-text-secondary: #4e5968;
   --admin-text-muted: #8b95a1;
-  --admin-border: #e5e8eb;
-  --admin-border-subtle: #f0f1f3;
+  --admin-border: #e4eaf1;
+  --admin-border-subtle: #edf1f5;
   --admin-blue: #3182f6;
   --admin-blue-strong: #1b64da;
   --admin-blue-wash: #eef5ff;
-  --admin-radius: 16px;
-  --admin-shadow: 0 1px 2px rgb(25 31 40 / 3%), 0 8px 24px rgb(25 31 40 / 3%);
+  --admin-blue-gradient: linear-gradient(135deg, #4f91f7 0%, #2f7cf4 55%, #286be3 100%);
+  --admin-radius: 20px;
+  --admin-shadow: 0 1px 2px rgb(25 31 40 / 3%), 0 14px 34px rgb(41 72 112 / 6%);
+  --admin-shadow-raised: 0 16px 38px rgb(41 72 112 / 10%);
 
   display: flex;
   min-height: 100vh;
-  background: var(--admin-bg);
+  background:
+    radial-gradient(circle at 80% -10%, rgb(49 130 246 / 10%), transparent 30%),
+    linear-gradient(180deg, #f7f9fd 0%, var(--admin-bg) 38%, #f5f7fa 100%);
   color: var(--admin-text);
   font-variant-numeric: tabular-nums;
 }
@@ -23,30 +27,31 @@
 .admin-sidebar {
   position: sticky;
   top: 0;
-  width: 252px;
-  flex: 0 0 252px;
+  width: 236px;
+  flex: 0 0 236px;
   min-height: 100vh;
-  padding: 32px 20px;
-  border-right: 1px solid var(--admin-border);
-  background: var(--admin-surface);
+  padding: 30px 18px;
+  border-right: 1px solid rgb(219 227 237 / 82%);
+  background: rgb(255 255 255 / 86%);
+  backdrop-filter: blur(18px);
 }
 
 .admin-brand {
   display: grid;
-  padding: 0 12px 36px;
+  padding: 2px 14px 38px;
 }
 
 .admin-brand strong {
   display: block;
   color: var(--admin-text);
-  font-size: 22px;
+  font-size: 21px;
   letter-spacing: -0.04em;
   line-height: 1.25;
 }
 
 .admin-navigation ul {
   display: grid;
-  gap: 6px;
+  gap: 7px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -54,24 +59,35 @@
 
 .admin-navigation a {
   display: flex;
-  min-height: 44px;
+  min-height: 46px;
   align-items: center;
   padding: 0 14px;
-  border-radius: 10px;
+  border: 1px solid transparent;
+  border-radius: 13px;
   color: var(--admin-text-secondary);
   font-size: 14px;
   font-weight: 700;
   letter-spacing: -0.01em;
   text-decoration: none;
-  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .admin-navigation a:hover,
-.admin-navigation a:focus-visible,
-.admin-navigation a.is-active {
+.admin-navigation a:focus-visible {
   outline: none;
-  background: var(--admin-blue-wash);
+  background: #f3f7fd;
   color: var(--admin-blue-strong);
+}
+
+.admin-navigation a.is-active {
+  border-color: rgb(49 130 246 / 10%);
+  background: linear-gradient(135deg, #eaf3ff 0%, #f5f9ff 100%);
+  color: var(--admin-blue-strong);
+  box-shadow: inset 3px 0 0 var(--admin-blue), 0 5px 14px rgb(49 130 246 / 8%);
+}
+
+.admin-navigation a:hover {
+  transform: translateX(2px);
 }
 
 .admin-navigation a:focus-visible {
@@ -79,17 +95,17 @@
 }
 
 .admin-main {
-  width: min(100%, 1440px);
+  width: min(100%, 1480px);
   min-width: 0;
   flex: 1;
-  padding: 28px 56px 72px;
+  padding: 30px 46px 72px;
 }
 
 .admin-page-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 24px;
+  gap: 22px;
   margin-bottom: 28px;
 }
 
@@ -153,10 +169,19 @@
 
 .admin-dashboard-panel,
 .attendance-summary-card {
-  border: 1px solid var(--admin-border);
+  border: 1px solid rgb(222 229 238 / 90%);
   border-radius: var(--admin-radius);
-  background: var(--admin-surface);
+  background: linear-gradient(180deg, #ffffff 0%, #ffffff 76%, #fbfdff 100%);
   box-shadow: var(--admin-shadow);
+}
+
+.admin-dashboard-panel {
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.admin-dashboard-panel:hover {
+  border-color: rgb(205 218 234 / 92%);
+  box-shadow: var(--admin-shadow-raised);
 }
 
 .admin-dashboard-two-column,
@@ -164,12 +189,12 @@
 .attendance-main-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
-  gap: 24px;
+  gap: 22px;
 }
 
 .admin-dashboard-panel {
   min-width: 0;
-  padding: 28px;
+  padding: 28px 30px;
 }
 
 .admin-panel-heading {
@@ -177,7 +202,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 28px;
+  margin-bottom: 26px;
 }
 
 .admin-panel-meta {
@@ -186,16 +211,18 @@
   white-space: nowrap;
 }
 
-.admin-trend-period select {
+.admin-trend-period select,
+.admin-service-date select {
   min-height: 36px;
-  padding: 0 10px;
+  padding: 0 32px 0 12px;
   border: 1px solid var(--admin-border);
-  border-radius: 8px;
-  background: var(--admin-surface);
+  border-radius: 12px;
+  background-color: var(--admin-surface-subtle);
   color: var(--admin-text-secondary);
   font: inherit;
   font-size: 12px;
   font-weight: 700;
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
 }
 
 .admin-trend-controls,
@@ -205,16 +232,14 @@
   gap: 8px;
 }
 
-.admin-service-date select {
-  min-height: 36px;
-  padding: 0 30px 0 11px;
-  border: 1px solid var(--admin-border);
-  border-radius: 8px;
-  background: var(--admin-surface);
-  color: var(--admin-text-secondary);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
+.admin-trend-period select:hover,
+.admin-service-date select:hover,
+.admin-trend-period select:focus-visible,
+.admin-service-date select:focus-visible {
+  border-color: rgb(49 130 246 / 50%);
+  outline: none;
+  background-color: var(--admin-surface);
+  box-shadow: 0 0 0 3px rgb(49 130 246 / 10%);
 }
 
 .sr-only {
@@ -278,7 +303,8 @@
   stroke: var(--admin-blue);
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 2.5;
+  stroke-width: 3;
+  filter: drop-shadow(0 3px 5px rgb(49 130 246 / 16%));
 }
 
 .admin-trend-area {
@@ -288,7 +314,7 @@
 .admin-trend-point {
   fill: var(--admin-surface);
   stroke: var(--admin-blue);
-  stroke-width: 2.5;
+  stroke-width: 3;
 }
 
 .admin-trend-point-group {
@@ -350,7 +376,7 @@
 
 .admin-service-column-track {
   display: flex;
-  width: min(68px, 70%);
+  width: min(72px, 72%);
   height: 178px;
   align-items: flex-end;
   justify-content: center;
@@ -360,9 +386,14 @@
 .admin-service-column-bar {
   width: 100%;
   min-height: 4px;
-  border-radius: 10px 10px 5px 5px;
+  border-radius: 16px 16px 10px 10px;
   background: linear-gradient(180deg, #5a9bff 0%, var(--admin-blue) 100%);
-  box-shadow: 0 5px 12px rgb(49 130 246 / 16%);
+  box-shadow: 0 10px 20px rgb(49 130 246 / 16%);
+  transition: height 220ms ease-out, filter 160ms ease;
+}
+
+.admin-service-column:hover .admin-service-column-bar {
+  filter: saturate(1.08) brightness(1.02);
 }
 
 .admin-service-column-label {
@@ -417,7 +448,16 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 13px 0;
+  padding: 15px 2px;
+  transition: background-color 150ms ease, padding 150ms ease;
+}
+
+.admin-member-list li:hover {
+  margin: 0 -10px;
+  padding-right: 12px;
+  padding-left: 12px;
+  border-radius: 12px;
+  background: #f7faff;
 }
 
 .admin-member-list li > div {
@@ -458,7 +498,7 @@
 
 .qr-generation-form {
   display: grid;
-  gap: 20px;
+  gap: 24px;
 }
 
 .qr-generation-picker {
@@ -475,7 +515,8 @@
 .qr-year-options {
   display: inline-flex;
   padding: 4px;
-  border-radius: 10px;
+  border: 1px solid var(--admin-border-subtle);
+  border-radius: 12px;
   background: var(--admin-surface-subtle);
 }
 
@@ -484,7 +525,7 @@
   min-height: 32px;
   padding: 0 12px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 9px;
   background: transparent;
   color: var(--admin-text-muted);
   font: inherit;
@@ -494,9 +535,9 @@
 }
 
 .qr-year-options button.is-selected {
-  background: var(--admin-surface);
+  background: linear-gradient(135deg, #ffffff 0%, #edf5ff 100%);
   color: var(--admin-blue-strong);
-  box-shadow: 0 2px 6px rgb(25 31 40 / 10%);
+  box-shadow: 0 3px 10px rgb(49 130 246 / 10%);
 }
 
 .qr-year-options button:focus-visible {
@@ -509,7 +550,8 @@
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 6px;
   padding: 4px;
-  border-radius: 10px;
+  border: 1px solid var(--admin-border-subtle);
+  border-radius: 12px;
   background: var(--admin-surface-subtle);
 }
 
@@ -527,9 +569,9 @@
 }
 
 .qr-month-options button.is-selected {
-  background: var(--admin-surface);
+  background: linear-gradient(135deg, #ffffff 0%, #edf5ff 100%);
   color: var(--admin-blue-strong);
-  box-shadow: 0 2px 6px rgb(25 31 40 / 10%);
+  box-shadow: 0 3px 10px rgb(49 130 246 / 10%);
 }
 
 .qr-month-options button:focus-visible {
@@ -558,28 +600,30 @@
 .qr-week-options {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .qr-date-option {
   display: grid;
-  min-height: 58px;
+  min-height: 66px;
   gap: 4px;
   align-content: center;
   padding: 8px 6px;
   border: 1px solid var(--admin-border);
-  border-radius: 9px;
-  background: var(--admin-surface-subtle);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7f9fc 100%);
   color: var(--admin-text-muted);
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .qr-date-option:hover {
   border-color: #a9c9fb;
   background: #f7faff;
+  box-shadow: 0 8px 18px rgb(41 72 112 / 8%);
+  transform: translateY(-2px);
 }
 
 .qr-date-option.is-past,
@@ -588,6 +632,8 @@
   background: #f1f3f5;
   color: #afb6bf;
   cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
 }
 
 .qr-date-option.is-past strong {
@@ -596,8 +642,8 @@
 
 .qr-date-option.is-selected {
   border-color: var(--admin-blue);
-  background: var(--admin-blue-wash);
-  box-shadow: 0 0 0 2px rgb(49 130 246 / 12%);
+  background: linear-gradient(145deg, #f7fbff 0%, #e8f2ff 100%);
+  box-shadow: 0 0 0 3px rgb(49 130 246 / 10%), 0 10px 20px rgb(49 130 246 / 12%);
   color: var(--admin-blue-strong);
 }
 
@@ -638,19 +684,20 @@
 .qr-session-part-links {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  padding: 0 12px 12px;
+  gap: 14px;
+  padding: 4px 0 0;
 }
 
 
 .qr-session-part-card {
   display: grid;
   justify-items: center;
-  gap: 10px;
-  padding: 16px 10px 12px;
+  gap: 14px;
+  padding: 20px 14px 14px;
   border: 1px solid var(--admin-border);
-  border-radius: 12px;
-  background: var(--admin-surface-subtle);
+  border-radius: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f6f9fd 100%);
+  box-shadow: 0 10px 24px rgb(41 72 112 / 7%);
 }
 
 .qr-session-part-card strong {
@@ -663,11 +710,12 @@
   align-items: center;
   justify-content: center;
   width: 100%;
-  padding: 7px 10px;
-  border: 1px solid var(--admin-blue);
-  border-radius: 9px;
-  background: transparent;
-  color: var(--admin-blue-strong);
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--admin-blue-gradient);
+  color: #fff;
   font: inherit;
   font-size: 12px;
   font-weight: 800;
@@ -676,7 +724,9 @@
 
 .qr-copy-button:hover,
 .qr-copy-button:focus-visible {
-  background: var(--admin-blue-wash);
+  outline: none;
+  box-shadow: 0 8px 18px rgb(49 130 246 / 22%);
+  filter: brightness(1.03);
 }
 
 
@@ -685,7 +735,8 @@
   align-items: flex-end;
   flex-wrap: wrap;
   gap: 14px;
-  padding: 20px 24px;
+  padding: 22px 26px;
+  background: linear-gradient(135deg, #ffffff 0%, #f8fbff 100%);
 }
 
 .attendance-filter-group {
@@ -726,15 +777,16 @@
 .attendance-period-options {
   display: inline-flex;
   padding: 4px;
-  border-radius: 11px;
+  border: 1px solid var(--admin-border-subtle);
+  border-radius: 13px;
   background: var(--admin-surface-subtle);
 }
 
 .attendance-period-options button {
-  min-height: 32px;
+  min-height: 34px;
   padding: 0 14px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
   color: var(--admin-text-muted);
   font: inherit;
@@ -748,9 +800,9 @@
 }
 
 .attendance-period-options button.is-selected {
-  background: var(--admin-surface);
+  background: linear-gradient(135deg, #ffffff 0%, #edf5ff 100%);
   color: var(--admin-blue-strong);
-  box-shadow: 0 2px 6px rgb(25 31 40 / 10%);
+  box-shadow: 0 3px 10px rgb(49 130 246 / 10%);
 }
 
 .attendance-period-options button:focus-visible {
@@ -787,12 +839,12 @@
 
 .attendance-member-search input {
   width: 100%;
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 14px 0 38px;
   border: 1px solid var(--admin-border);
   border-radius: 999px;
   outline: none;
-  background: var(--admin-surface-subtle);
+  background: var(--admin-surface);
   color: var(--admin-text);
   font: inherit;
   font-size: 13px;
@@ -823,11 +875,11 @@
 }
 
 .attendance-export-button {
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 16px;
-  border: 1px solid #24a066;
-  border-radius: 10px;
-  background: #27ae70;
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #38bc7c 0%, #1e9f63 100%);
   color: #fff;
   font: inherit;
   font-size: 12px;
@@ -837,8 +889,8 @@
 
 .attendance-export-button:hover:not(:disabled),
 .attendance-export-button:focus-visible {
-  border-color: #16834b;
-  background: #1f995f;
+  background: linear-gradient(135deg, #31b574 0%, #168d56 100%);
+  box-shadow: 0 8px 18px rgb(31 153 95 / 18%);
   outline: none;
 }
 
@@ -875,8 +927,14 @@
 .attendance-summary-card {
   display: grid;
   gap: 9px;
-  min-height: 120px;
-  padding: 20px 22px;
+  min-height: 124px;
+  padding: 22px 24px;
+  transition: box-shadow 160ms ease, transform 160ms ease;
+}
+
+.attendance-summary-card:hover {
+  box-shadow: var(--admin-shadow-raised);
+  transform: translateY(-2px);
 }
 
 .attendance-summary-card p,
@@ -975,6 +1033,8 @@
   overflow: auto;
   max-height: 620px;
   border-top: 1px solid var(--admin-border-subtle);
+  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-width: thin;
 }
 
 .attendance-table-note {
@@ -1007,14 +1067,15 @@
 
 .attendance-table tbody tr:hover th,
 .attendance-table tbody tr:hover td {
-  background: #fbfcfe;
+  background: #f7faff;
 }
 
 .attendance-table thead th {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--admin-surface);
+  background: rgb(255 255 255 / 96%);
+  backdrop-filter: blur(8px);
   color: var(--admin-text-muted);
   font-size: 11px;
   font-weight: 800;
@@ -1041,7 +1102,7 @@
 
 .attendance-table tbody tr.is-selected th,
 .attendance-table tbody tr.is-selected td {
-  background: #f5f9ff;
+  background: #eef6ff;
 }
 
 .attendance-member-button {
@@ -1085,7 +1146,8 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgb(20 27 38 / 34%);
+  background: rgb(20 27 38 / 30%);
+  backdrop-filter: blur(5px);
   animation: admin-fade-in 140ms ease-out;
 }
 
@@ -1093,11 +1155,11 @@
   width: min(100%, 680px);
   max-height: min(720px, calc(100vh - 48px));
   overflow: auto;
-  padding: 28px;
+  padding: 30px;
   border: 1px solid var(--admin-border);
-  border-radius: 18px;
-  background: var(--admin-surface);
-  box-shadow: 0 20px 60px rgb(20 27 38 / 20%);
+  border-radius: 24px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+  box-shadow: 0 28px 80px rgb(20 27 38 / 22%);
   animation: admin-modal-rise 180ms ease-out;
 }
 
@@ -1129,7 +1191,7 @@
   flex: 0 0 auto;
   border: 0;
   border-radius: 50%;
-  background: var(--admin-surface-subtle);
+  background: #f1f5f9;
   color: var(--admin-text-secondary);
   font-size: 24px;
   line-height: 1;
@@ -1153,8 +1215,9 @@
   display: grid;
   gap: 7px;
   padding: 14px;
-  border-radius: 12px;
-  background: var(--admin-surface-subtle);
+  border: 1px solid var(--admin-border-subtle);
+  border-radius: 14px;
+  background: linear-gradient(145deg, #f8fafc 0%, #f2f7fd 100%);
 }
 
 .attendance-detail-summary span,
@@ -1222,7 +1285,7 @@
 }
 
 .attendance-detail-status.is-attended {
-  background: #e5f7ed;
+  background: linear-gradient(145deg, #ebfaf2 0%, #ddf5e8 100%);
   color: #16834b;
 }
 
@@ -1262,7 +1325,7 @@
 }
 
 .attendance-status.is-attended {
-  background: #e8f7ee;
+  background: linear-gradient(145deg, #ecfaf3 0%, #ddf5e8 100%);
   color: #16834b;
 }
 
@@ -1304,7 +1367,7 @@
 .attendance-rate-track div {
   height: 100%;
   border-radius: inherit;
-  background: #2bb673;
+  background: linear-gradient(90deg, #3bc681 0%, #20a968 100%);
 }
 
 .attendance-side-column {
@@ -1437,13 +1500,14 @@
 }
 
 .admin-dashboard-panel .primary-button {
-  background: var(--admin-blue);
+  background: var(--admin-blue-gradient);
 }
 
 .admin-dashboard-panel .primary-button:hover,
 .admin-dashboard-panel .primary-button:focus-visible {
-  background: var(--admin-blue-strong);
-  box-shadow: 0 6px 14px rgb(49 130 246 / 20%);
+  background: var(--admin-blue-gradient);
+  box-shadow: 0 9px 20px rgb(49 130 246 / 24%);
+  filter: brightness(1.03);
 }
 
 .admin-dashboard-panel .secondary-button {
@@ -1512,6 +1576,10 @@
     padding: 0 8px;
     font-size: 12px;
     text-align: center;
+  }
+
+  .admin-navigation a.is-active {
+    box-shadow: inset 0 -3px 0 var(--admin-blue), 0 5px 14px rgb(49 130 246 / 8%);
   }
 
   .admin-main {
@@ -1618,5 +1686,16 @@
 
   .admin-panel-meta {
     font-size: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-shell-layout *,
+  .admin-shell-layout *::before,
+  .admin-shell-layout *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }

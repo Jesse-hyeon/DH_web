@@ -49,6 +49,12 @@ export interface CurrentServiceAttendance {
   rows: AttendanceRecord[]
 }
 
+export interface ServiceAttendanceSummary {
+  serviceKey: ServiceKey
+  totalCount: number
+  partCounts: Record<ServicePart, number>
+}
+
 /** The app-facing contract implemented by both demo and Firebase repositories. */
 export interface AttendanceRepository {
   searchRegisteredMembers(query: string, limit?: number): Promise<PublicMember[]>
@@ -61,6 +67,9 @@ export interface AttendanceRepository {
 
   /** Fetch one explicitly selected service date for QR-to-admin reconciliation. */
   getServiceAttendance(serviceKey: ServiceKey, limit?: number): Promise<CurrentServiceAttendance>
+
+  /** Read aggregate counts without downloading every attendance document. */
+  getServiceAttendanceSummary(serviceKey: ServiceKey): Promise<ServiceAttendanceSummary>
 
   listMemberHistory(memberId: string, limit?: number): Promise<AttendanceRecord[]>
 }

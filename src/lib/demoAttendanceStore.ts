@@ -10,6 +10,7 @@ import {
   type AttendanceRecord,
   type AttendanceRepository,
   type CurrentServiceAttendance,
+  type ServiceAttendanceSummary,
 } from './attendanceRepository'
 import { toSeoulServiceKey } from './seoulDate'
 
@@ -96,6 +97,23 @@ export function createDemoAttendanceRepository(
     }
   }
 
+  async function getServiceAttendanceSummary(
+    serviceKey: ServiceKey,
+  ): Promise<ServiceAttendanceSummary> {
+    assertServiceKey(serviceKey)
+    const serviceRecords = submissionRecords.filter((record) => record.serviceKey === serviceKey)
+
+    return {
+      serviceKey,
+      totalCount: Math.min(serviceRecords.length, MAX_ADMIN_ROWS),
+      partCounts: {
+        1: serviceRecords.filter((record) => record.servicePart === 1).length,
+        2: serviceRecords.filter((record) => record.servicePart === 2).length,
+        3: serviceRecords.filter((record) => record.servicePart === 3).length,
+      },
+    }
+  }
+
   return {
     async searchRegisteredMembers(query, limit): Promise<PublicMember[]> {
       return searchRegisteredMembers(
@@ -151,6 +169,7 @@ export function createDemoAttendanceRepository(
     },
 
     getServiceAttendance,
+    getServiceAttendanceSummary,
 
     async listMemberHistory(memberId: string, limit?: number): Promise<DemoAttendanceRecord[]> {
       const normalizedMemberId = memberId.trim()

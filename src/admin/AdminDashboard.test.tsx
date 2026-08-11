@@ -2,7 +2,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { AttendanceRepository, CurrentServiceAttendance } from '../lib/attendanceRepository'
+import type { AttendanceRepository, ServiceAttendanceSummary } from '../lib/attendanceRepository'
 import AdminDashboard from './AdminDashboard'
 import { ADMIN_DEMO_FIXTURES, ADMIN_DEMO_REFERENCE_DATE } from './demoData'
 import {
@@ -139,21 +139,19 @@ describe('AdminDashboard', () => {
       ['2026-08-09', 3],
       ['2026-08-16', 6],
     ])
-    const getServiceAttendance = async (serviceKey: string): Promise<CurrentServiceAttendance> => {
+    const getServiceAttendanceSummary = async (serviceKey: string): Promise<ServiceAttendanceSummary> => {
       const totalCount = totalsByDate.get(serviceKey) ?? 0
-      const rows = Array.from({ length: totalCount }, (_, index) => ({
-        id: `${serviceKey}-${index}`,
-        memberId: `m-${index}`,
-        displayNameSnapshot: `교인 ${index}`,
+      return {
         serviceKey,
-        servicePart: (index < 1 ? 1 : index < 3 ? 2 : 3) as 1 | 2 | 3,
-        submittedAt: new Date(`${serviceKey}T01:00:00.000Z`),
-      }))
-      return { serviceKey, totalCount, rows }
+        totalCount,
+        partCounts: serviceKey === '2026-08-16'
+          ? { 1: 1, 2: 2, 3: 3 }
+          : { 1: 0, 2: 0, 3: 0 },
+      }
     }
     const repository = {
       getCurrentServiceConfig: async () => ({ serviceKey: '2026-08-16' }),
-      getServiceAttendance,
+      getServiceAttendanceSummary,
     } as unknown as AttendanceRepository
 
     rendered = await renderDashboard(repository)
@@ -170,5 +168,20 @@ describe('AdminDashboard', () => {
     )).toEqual(['1명', '2명', '3명'])
     expect(rendered.container.querySelector<HTMLSelectElement>('select[aria-label="예배 출석 날짜"]')?.value)
       .toBe('2026-08-16')
+  })
+
+  it('explains when the Firebase daily read quota is exhausted', async () => {
+    const quotaError = Object.assign(new Error('Quota exceeded.'), { code: 'resource-exhausted' })
+    const repository = {
+      getCurrentServiceConfig: async () => Promise.reject(quotaError),
+    } as unknown as AttendanceRepository
+
+    rendered = await renderDashboard(repository)
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(rendered.container.querySelector('[role="alert"]')?.textContent)
+      .toContain('Firebase 무료 조회 한도가 소진되었습니다.')
   })
 })

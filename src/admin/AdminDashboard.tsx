@@ -2,9 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { ADMIN_DEMO_FIXTURES, ADMIN_DEMO_REFERENCE_DATE } from './demoData'
 import {
-  MAX_ADMIN_ROWS,
   type AttendanceRepository,
-  type CurrentServiceAttendance,
+  type ServiceAttendanceSummary,
 } from '../lib/attendanceRepository'
 import {
   selectLongTermAbsentees,
@@ -21,6 +20,16 @@ const numberFormatter = new Intl.NumberFormat('ko-KR')
 
 function formatCount(value: number): string {
   return numberFormatter.format(Math.round(value))
+}
+
+function dashboardLoadError(error: unknown, fallback: string): string {
+  const firebaseError = error as { code?: unknown; message?: unknown }
+  if (firebaseError.code === 'resource-exhausted'
+    || (typeof firebaseError.message === 'string' && firebaseError.message.includes('Quota exceeded'))) {
+    return 'Firebase 무료 조회 한도가 소진되었습니다. 한도 초기화 후 자동으로 다시 표시됩니다.'
+  }
+
+  return fallback
 }
 
 function formatDate(value: string): string {
@@ -60,7 +69,7 @@ const TREND_PERIOD_OPTIONS: ReadonlyArray<{ value: AdminDemoPeriod; label: strin
 
 function actualWeeklySummaries(
   dates: ReadonlyArray<string>,
-  attendance: ReadonlyArray<CurrentServiceAttendance>,
+  attendance: ReadonlyArray<ServiceAttendanceSummary>,
 ): ReadonlyArray<AdminDemoWeeklySummary> {
   const attendanceByDate = new Map(attendance.map((entry) => [entry.serviceKey, entry]))
 
@@ -77,10 +86,10 @@ function actualWeeklySummaries(
 }
 
 function actualServiceAverages(
-  attendance: CurrentServiceAttendance | null,
+  attendance: ServiceAttendanceSummary | null,
 ): ReadonlyArray<AdminDemoServiceAverage> {
   return ([1, 2, 3] as const).map((part) => {
-    const attendedCount = attendance?.rows.filter((row) => row.servicePart === part).length ?? 0
+    const attendedCount = attendance?.partCounts[part] ?? 0
     return {
       part,
       attendedCount,
@@ -335,10 +344,10 @@ export default function AdminDashboard({ repository }: AdminDashboardProps) {
     repository ? null : ADMIN_DEMO_REFERENCE_DATE,
   )
   const [serviceDate, setServiceDate] = useState(repository ? '' : ADMIN_DEMO_REFERENCE_DATE)
-  const [trendAttendance, setTrendAttendance] = useState<ReadonlyArray<CurrentServiceAttendance>>([])
-  const [serviceAttendance, setServiceAttendance] = useState<CurrentServiceAttendance | null>(null)
+  const [trendAttendance, setTrendAttendance] = useState<ReadonlyArray<ServiceAttendanceSummary>>([])
+  const [serviceAttendance, setServiceAttendance] = useState<ServiceAttendanceSummary | null>(null)
   const [liveDashboardError, setLiveDashboardError] = useState('')
-  const attendanceCache = useRef(new Map<string, CurrentServiceAttendance>())
+  const attendanceCache = useRef(new Map<string, ServiceAttendanceSummary>())
   const newMembers = selectNewMembers(ADMIN_DEMO_FIXTURES)
   const longTermAbsentees = selectLongTermAbsentees(ADMIN_DEMO_FIXTURES)
   const selectedTrendPeriod = TREND_PERIOD_OPTIONS.find((option) => option.value === trendPeriod)
@@ -379,9 +388,9 @@ export default function AdminDashboard({ repository }: AdminDashboardProps) {
           setLiveDashboardError('')
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (isActive) {
-          setLiveDashboardError('실제 출석 기준일을 불러오지 못했습니다.')
+          setLiveDashboardError(dashboardLoadError(error, '실제 출석 기준일을 불러오지 못했습니다.'))
         }
       })
 
@@ -401,7 +410,7 @@ export default function AdminDashboard({ repository }: AdminDashboardProps) {
       if (cached) {
         return cached
       }
-      const attendance = await repository.getServiceAttendance(date, MAX_ADMIN_ROWS)
+      const attendance = await repository.getServiceAttendanceSummary(date)
       attendanceCache.current.set(date, attendance)
       return attendance
     }))
@@ -411,10 +420,10 @@ export default function AdminDashboard({ repository }: AdminDashboardProps) {
           setLiveDashboardError('')
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (isActive) {
           setTrendAttendance([])
-          setLiveDashboardError('실제 출석 추이를 불러오지 못했습니다.')
+          setLiveDashboardError(dashboardLoadError(error, '실제 출석 추이를 불러오지 못했습니다.'))
         }
       })
 
@@ -432,7 +441,7 @@ export default function AdminDashboard({ repository }: AdminDashboardProps) {
     const cached = attendanceCache.current.get(serviceDate)
     const request = cached
       ? Promise.resolve(cached)
-      : repository.getServiceAttendance(serviceDate, MAX_ADMIN_ROWS).then((attendance) => {
+      : repository.getServiceAttendanceSummary(serviceDate).then((attendance) => {
         attendanceCache.current.set(serviceDate, attendance)
         return attendance
       })
@@ -445,10 +454,10 @@ export default function AdminDashboard({ repository }: AdminDashboardProps) {
           setLiveDashboardError('')
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (isActive) {
           setServiceAttendance(null)
-          setLiveDashboardError('선택한 날짜의 실제 출석 정보를 불러오지 못했습니다.')
+          setLiveDashboardError(dashboardLoadError(error, '선택한 날짜의 실제 출석 정보를 불러오지 못했습니다.'))
         }
       })
 

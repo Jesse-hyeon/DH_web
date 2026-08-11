@@ -10,7 +10,11 @@ import type {
   DemoAttendanceRepository,
 } from './lib/demoAttendanceStore'
 import { searchRegisteredMembers as searchDemoRegisteredMembers } from './lib/demoAttendanceStore'
-import { MAX_ADMIN_ROWS, type CurrentServiceAttendance } from './lib/attendanceRepository'
+import {
+  MAX_ADMIN_ROWS,
+  type CurrentServiceAttendance,
+  type ServiceAttendanceSummary,
+} from './lib/attendanceRepository'
 
 const serviceKey = '2026-08-10'
 
@@ -84,6 +88,22 @@ function createRepository(options: {
         serviceKey: selectedServiceKey,
         totalCount: Math.min(selectedSubmissions.length, MAX_ADMIN_ROWS),
         rows: selectedSubmissions.slice(0, limit ?? MAX_ADMIN_ROWS),
+      }
+    },
+    async getServiceAttendanceSummary(selectedServiceKey): Promise<ServiceAttendanceSummary> {
+      const submissions = options.submissions ? await options.submissions() : []
+      const selectedSubmissions = submissions.filter(
+        (record) => record.serviceKey === selectedServiceKey,
+      )
+
+      return {
+        serviceKey: selectedServiceKey,
+        totalCount: Math.min(selectedSubmissions.length, MAX_ADMIN_ROWS),
+        partCounts: {
+          1: selectedSubmissions.filter((record) => record.servicePart === 1).length,
+          2: selectedSubmissions.filter((record) => record.servicePart === 2).length,
+          3: selectedSubmissions.filter((record) => record.servicePart === 3).length,
+        },
       }
     },
     async listMemberHistory(memberId, limit) {

@@ -322,6 +322,25 @@ describe('createFirestoreRepository', () => {
     expect(collectionPaths).toContainEqual(['attendanceServices', '2026-08-10', 'submissions']);
   });
 
+  it('loads dashboard totals through aggregate counts without attendance rows', async () => {
+    const queries: unknown[][] = [];
+    const repository = createFirestoreRepository(makeFirestoreForRepository(queries, {
+      countResults: [1_207, 252, 425, 530],
+    }));
+
+    await expect(repository.getServiceAttendanceSummary('2026-08-09')).resolves.toEqual({
+      serviceKey: '2026-08-09',
+      totalCount: 1_207,
+      partCounts: { 1: 252, 2: 425, 3: 530 },
+    });
+    expect(queries).toEqual([
+      [{ limit: 2_000 }],
+      [{ fieldPath: 'servicePart', opStr: '==', value: 1 }, { limit: 2_000 }],
+      [{ fieldPath: 'servicePart', opStr: '==', value: 2 }, { limit: 2_000 }],
+      [{ fieldPath: 'servicePart', opStr: '==', value: 3 }, { limit: 2_000 }],
+    ]);
+  });
+
   it('keeps read methods independent of object this binding', async () => {
     const repository = createFirestoreRepository(makeFirestoreForRepository([]));
     const { getCurrentServiceAttendance, listMemberHistory } = repository;
@@ -506,6 +525,7 @@ interface FirestoreRepositoryFixtureOptions {
   attendanceDocs?: ReadonlyArray<FirestoreDocumentSnapshot<unknown>>;
   attendanceDocsAfterWrite?: ReadonlyArray<FirestoreDocumentSnapshot<unknown>>;
   collectionPaths?: string[][];
+  countResults?: number[];
   writeError?: Error;
 }
 
@@ -521,6 +541,7 @@ function makeFirestoreForRepository(
     attendanceDocs = [],
     attendanceDocsAfterWrite = attendanceDocs,
     collectionPaths = [],
+    countResults = [],
     writeError,
   } = options;
   let writeAttempted = false;
@@ -563,6 +584,6 @@ function makeFirestoreForRepository(
     orderBy: (fieldPath, directionStr) => ({ fieldPath, directionStr }),
     limit: (limit) => ({ limit }),
     serverTimestamp: () => ({}),
-    getCount: async () => 0,
+    getCount: async () => countResults.shift() ?? 0,
   };
 }

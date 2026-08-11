@@ -151,7 +151,7 @@ export default function AdminShell({ repository }: AdminShellProps) {
     <div className="admin-shell-layout">
       <aside className="admin-sidebar" aria-label="관리자 영역">
         <div className="admin-brand">
-          <strong>대흥교회<br />출석관리 시스템</strong>
+          <strong>대흥교회 출석관리</strong>
         </div>
 
         <nav className="admin-navigation" aria-label="관리자 메뉴">

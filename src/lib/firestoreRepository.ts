@@ -4,6 +4,7 @@ import type {
   AttendanceRepository,
   AttendanceSubmissionResult as RepositorySubmissionResult,
   CurrentServiceAttendance,
+  ServiceAttendanceSummary,
 } from './attendanceRepository'
 import {
   boundedRepositoryLimit,
@@ -346,6 +347,33 @@ export function createFirestoreRepository(firestore: FirestoreLike): AttendanceR
     }
   }
 
+  const getServiceAttendanceSummary = async (
+    serviceKey: string,
+  ): Promise<ServiceAttendanceSummary> => {
+    const submissionsRef = firestore.collection(attendanceSubmissionsPath(serviceKey))
+    const countQuery = (part?: 1 | 2 | 3) => firestore.query(
+      submissionsRef,
+      ...(part ? [firestore.where('servicePart', '==', part)] : []),
+      firestore.limit(MAX_ADMIN_ROWS),
+    )
+    const [totalCount, part1Count, part2Count, part3Count] = await Promise.all([
+      firestore.getCount(countQuery()),
+      firestore.getCount(countQuery(1)),
+      firestore.getCount(countQuery(2)),
+      firestore.getCount(countQuery(3)),
+    ])
+
+    return {
+      serviceKey,
+      totalCount,
+      partCounts: {
+        1: part1Count,
+        2: part2Count,
+        3: part3Count,
+      },
+    }
+  }
+
   const searchRegisteredMembers = async (queryValue: string, limitValue?: number) => {
     const normalizedQuery = normalizeMemberSearchQuery(queryValue)
     if (normalizedQuery.length < MIN_MEMBER_SEARCH_LENGTH) {
@@ -441,6 +469,7 @@ export function createFirestoreRepository(firestore: FirestoreLike): AttendanceR
     },
 
     getServiceAttendance,
+    getServiceAttendanceSummary,
 
     async listMemberHistory(memberId: string, max?: number): Promise<AttendanceRecord[]> {
       if (!isNonEmptyString(memberId)) {
